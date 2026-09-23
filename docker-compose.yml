@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ledger
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  core-ledger:
+    build: ./services/core-ledger
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/ledger
+    depends_on:
+      - postgres
+    ports:
+      - "8001:8001"
+
+  pix-service:
+    build: ./services/pix-service
+    environment:
+      LEDGER_URL: http://core-ledger:8001
+      SYSTEM_PIX_PENDING_ACCOUNT: ${SYSTEM_PIX_PENDING_ACCOUNT}
+      DEFAULT_MERCHANT_ACCOUNT: ${DEFAULT_MERCHANT_ACCOUNT}
+      MERCADOPAGO_ACCESS_TOKEN: ${MERCADOPAGO_ACCESS_TOKEN}
+      PAGARME_SECRET_KEY: ${PAGARME_SECRET_KEY}
+    depends_on:
+      - core-ledger
+    ports:
+      - "8002:8002"
+
+  card-service:
+    build: ./services/card-service
+    environment:
+      LEDGER_URL: http://core-ledger:8001
+      SYSTEM_CARD_RECEIVABLE_ACCOUNT: ${SYSTEM_CARD_RECEIVABLE_ACCOUNT}
+      DEFAULT_MERCHANT_ACCOUNT: ${DEFAULT_MERCHANT_ACCOUNT}
+      MERCADOPAGO_ACCESS_TOKEN: ${MERCADOPAGO_ACCESS_TOKEN}
+      PAGARME_SECRET_KEY: ${PAGARME_SECRET_KEY}
+    depends_on:
+      - core-ledger
+    ports:
+      - "8003:8003"
+
+  crypto-service:
+    build: ./services/crypto-service
+    environment:
+      LEDGER_URL: http://core-ledger:8001
+      SYSTEM_CRYPTO_PENDING_ACCOUNT: ${SYSTEM_CRYPTO_PENDING_ACCOUNT}
+      DEFAULT_MERCHANT_ACCOUNT: ${DEFAULT_MERCHANT_ACCOUNT}
+      HD_WALLET_MNEMONIC: ${HD_WALLET_MNEMONIC}
+      WEB3_RPC_URL: ${WEB3_RPC_URL:-https://polygon-rpc.com}
+      MATIC_BRL_RATE: ${MATIC_BRL_RATE:-2.50}
+      USDT_BRL_RATE: ${USDT_BRL_RATE:-5.50}
+    volumes:
+      - cryptodata:/app/data
+    depends_on:
+      - core-ledger
+    ports:
+      - "8004:8004"
+
+volumes:
+  pgdata:
+  cryptodata:
