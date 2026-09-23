@@ -57,6 +57,7 @@
     .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; }
     .flash.success { background: rgba(23,195,160,0.12); color: var(--brand); border: 1px solid rgba(23,195,160,0.3); }
     .flash.error { background: #3a1616; color: #ff9b9b; border: 1px solid #5a1f1f; }
+    .flash.info { background: rgba(154,163,172,0.12); color: var(--text); border: 1px solid var(--border); }
     .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; color: var(--text-dim); }
     .balance { font-size: 20px; font-weight: 600; }
     .badge { display:inline-block; padding: 2px 8px; border-radius: 20px; font-size: 12px; font-weight:700; background: rgba(23,195,160,0.15); color: var(--brand); }
@@ -77,6 +78,7 @@
       <a href="{{ url_for('transfer_form') }}">Transferência</a>
       <a href="{{ url_for('withdrawals_list') }}">Saques</a>
       <a href="{{ url_for('pix_new_form') }}">Gerar PIX</a>
+      <a href="{{ url_for('pix_check_form') }}">Verificar PIX</a>
       <a href="{{ url_for('crypto_new_form') }}">Gerar cripto</a>
       <a href="{{ url_for('providers_form') }}">Provedores</a>
       <a href="{{ url_for('platform_settings_form') }}">Taxa</a>

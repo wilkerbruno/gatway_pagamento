@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Verificar pagamento PIX{% endblock %}
+{% block content %}
+  <h1>Verificar pagamento PIX</h1>
+  <div class="card">
+    <p style="font-size:13px;color:var(--text-dim,#888);">
+      Cole o ID da transação (o campo "transação" que aparece na tela de "Cobrança PIX gerada",
+      ou no extrato do cliente). O sistema vai consultar o status direto na API do provedor
+      (Mercado Pago/Pagar.me) e, se estiver pago, atualiza o saldo na hora — sem precisar de webhook.
+    </p>
+    <form method="post" action="{{ url_for('pix_check_status', transaction_id='__ID__') }}" onsubmit="this.action = this.action.replace('__ID__', document.getElementById('txid').value); return true;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>ID da transação</label>
+      <input type="text" id="txid" name="transaction_id" placeholder="ex: 3f2b1c4e-..." required>
+      <button class="btn" type="submit">Verificar agora</button>
+    </form>
+  </div>
+{% endblock %}

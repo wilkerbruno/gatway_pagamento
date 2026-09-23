@@ -14,5 +14,13 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="btn secondary" type="submit">Simular pagamento (sandbox)</button>
     </form>
+    <form method="post" action="{{ url_for('pix_check_status', transaction_id=charge.transaction_id) }}" style="margin-top:8px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn" type="submit">Verificar pagamento agora</button>
+    </form>
+    <p style="font-size:12px;color:var(--text-dim,#888);margin-top:6px;">
+      Use este botão se o cliente já pagou de verdade (provedor real) mas o saldo ainda não atualizou —
+      ele consulta o status direto na API do provedor, sem depender do webhook ter chegado.
+    </p>
   </div>
 {% endblock %}

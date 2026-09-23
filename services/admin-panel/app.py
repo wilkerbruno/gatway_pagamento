@@ -331,6 +331,38 @@ def pix_simulate(transaction_id):
     return redirect(url_for("dashboard"))
 
 
+@app.post("/pix/<transaction_id>/check-status")
+@require_auth
+def pix_check_status(transaction_id):
+    """Reconsulta o status direto na API do provedor (Mercado Pago/Pagar.me),
+    sem depender de webhook -- útil quando o cliente já pagou de verdade mas
+    o saldo não subiu (webhook atrasado, mal configurado, ou que nunca
+    chegou)."""
+    resp = api_post(PIX_URL, f"/charges/{transaction_id}/check-status")
+    if resp.status_code >= 400:
+        flash(f"Erro ao verificar pagamento: {error_message(resp)}", "error")
+        return redirect(url_for("dashboard"))
+
+    result = resp.json()
+    status = result.get("status")
+    if status == "confirmed":
+        flash("Pagamento confirmado! O saldo já foi atualizado.", "success")
+    elif status == "failed":
+        flash("O provedor informou que esse pagamento falhou/foi cancelado.", "error")
+    else:
+        flash("Ainda não consta como pago no provedor. Se você já pagou, aguarde um pouco -- o PIX pode levar alguns segundos para compensar.", "info")
+    return redirect(url_for("dashboard"))
+
+
+@app.get("/pix/check")
+@require_auth
+def pix_check_form():
+    """Atalho pra colar um transaction_id de uma cobrança PIX antiga (gerada
+    numa sessão anterior, sem precisar navegar até ela) e verificar o status
+    direto na API do provedor."""
+    return render_template("pix_check.html")
+
+
 @app.get("/settings/system-accounts")
 @require_auth
 def system_accounts():

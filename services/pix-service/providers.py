@@ -33,6 +33,24 @@ class PixProvider(ABC):
         checar esse campo e recusar (nunca liquidar) um webhook não
         verificado — ver app.py."""
 
+    def check_status(self, provider_ref: str) -> dict:
+        """Reconsulta ATIVA (pull) do status direto na API do provedor, sem
+        depender de nenhum webhook ter chegado. É o que o botão "Verificar
+        pagamento agora" do admin-panel chama, e existe porque webhook pode
+        atrasar, ser mal configurado, ou simplesmente nunca chegar (URL
+        errada, evento não marcado no painel do provedor, etc.) — sem isso,
+        um pagamento real que o cliente já fez fica preso pra sempre esperando
+        uma notificação que pode não vir. Diferente do webhook, essa chamada
+        não precisa de verificação de assinatura: é o próprio servidor indo
+        buscar a informação na API oficial do provedor, autenticado com a
+        nossa própria credencial — não há nada pra forjar aqui.
+
+        Deve retornar {"provider_ref": str, "status": "confirmed"|"pending"|"failed"}.
+        Levanta NotImplementedError se o provedor não suportar (ex: sandbox)."""
+        raise NotImplementedError(
+            f"{type(self).__name__} não suporta verificação manual de status."
+        )
+
 
 class MercadoPagoPixProvider(PixProvider):
     BASE_URL = "https://api.mercadopago.com/v1/orders"
@@ -106,22 +124,10 @@ class MercadoPagoPixProvider(PixProvider):
         computed = hmac.new(self.webhook_secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
         return hmac.compare_digest(computed, v1)
 
-    def parse_webhook(self, payload, headers, query_params=None):
-        verified = self._verify_signature(headers, query_params)
-        if not verified:
-            # Não confiamos numa notificação que não conseguimos autenticar.
-            # Devolve "pending": o pagamento só será liquidado quando algo
-            # confiável confirmar (ex: você reconciliar manualmente, ou a
-            # assinatura ficar configurada corretamente).
-            return {"provider_ref": None, "status": "pending", "verified": False}
-
-        # Nunca confia no campo "status" do corpo do webhook em si — ele é
-        # só um aviso de "algo mudou". Reconsulta a API do Mercado Pago pra
-        # pegar o status real e autoritativo antes de liquidar qualquer coisa.
-        order_id = payload.get("data", {}).get("id") or payload.get("id")
-        if not order_id:
-            return {"provider_ref": None, "status": "pending", "verified": True}
-
+    def _query_order_status(self, order_id: str) -> dict:
+        """Consulta autoritativa direto no Mercado Pago (GET /v1/orders/{id}).
+        Usada tanto pelo webhook (depois de verificado) quanto pela
+        reconsulta manual (check_status), que não passa por webhook nenhum."""
         resp = requests.get(
             f"{self.BASE_URL}/{order_id}",
             headers={"Authorization": f"Bearer {self.access_token}"},
@@ -135,8 +141,30 @@ class MercadoPagoPixProvider(PixProvider):
         return {
             "provider_ref": data.get("id"),
             "status": status_map.get(raw_status, "pending"),
-            "verified": True,
         }
+
+    def check_status(self, provider_ref: str) -> dict:
+        return self._query_order_status(provider_ref)
+
+    def parse_webhook(self, payload, headers, query_params=None):
+        verified = self._verify_signature(headers, query_params)
+        if not verified:
+            # Não confiamos numa notificação que não conseguimos autenticar.
+            # Devolve "pending": o pagamento só será liquidado quando algo
+            # confiável confirmar (ex: você reconciliar manualmente pelo botão
+            # "Verificar pagamento agora", ou a assinatura ficar configurada
+            # corretamente).
+            return {"provider_ref": None, "status": "pending", "verified": False}
+
+        # Nunca confia no campo "status" do corpo do webhook em si — ele é
+        # só um aviso de "algo mudou". Reconsulta a API do Mercado Pago pra
+        # pegar o status real e autoritativo antes de liquidar qualquer coisa.
+        order_id = payload.get("data", {}).get("id") or payload.get("id")
+        if not order_id:
+            return {"provider_ref": None, "status": "pending", "verified": True}
+
+        result = self._query_order_status(order_id)
+        return {**result, "verified": True}
 
 
 class PagarmePixProvider(PixProvider):
@@ -177,6 +205,27 @@ class PagarmePixProvider(PixProvider):
             "qr_code_payload": tx.get("qr_code"),
             "qr_code_base64": tx.get("qr_code_url"),
         }
+
+    def check_status(self, provider_ref: str) -> dict:
+        """provider_ref aqui é o id da charge (é o que create_charge devolve
+        como provider_ref). A Pagar.me tem um endpoint dedicado pra
+        consultar uma charge isoladamente."""
+        resp = requests.get(
+            f"https://api.pagar.me/core/v5/charges/{provider_ref}",
+            auth=(self.secret_key, ""),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        raw_status = data.get("status", "pending")
+        status_map = {
+            "paid": "confirmed",
+            "failed": "failed",
+            "canceled": "failed",
+            "processing": "pending",
+            "pending": "pending",
+        }
+        return {"provider_ref": data.get("id"), "status": status_map.get(raw_status, "pending")}
 
     def parse_webhook(self, payload, headers, query_params=None):
         # Pagar.me manda {"type": "order.paid" | "charge.paid" | ..., "data": {...}}.

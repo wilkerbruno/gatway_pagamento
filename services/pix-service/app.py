@@ -124,6 +124,48 @@ def provider_webhook(provider_name):
     return jsonify(settle.json())
 
 
+@app.post("/charges/<transaction_id>/check-status")
+def check_charge_status(transaction_id):
+    """Reconsulta ativa: vai direto na API do provedor perguntar o status
+    real, sem depender de webhook nenhum ter chegado. Existe pra destravar o
+    caso "o cliente pagou de verdade mas o saldo não atualizou" (webhook
+    atrasado, mal configurado, ou que nunca chegou) -- o botão "Verificar
+    pagamento agora" do admin-panel chama isso."""
+    txn_resp = requests.get(f"{LEDGER_URL}/transactions/{transaction_id}", timeout=10)
+    if txn_resp.status_code != 200:
+        return jsonify({"error": "transação não encontrada"}), 404
+    txn = txn_resp.json()
+
+    if txn["status"] == "confirmed":
+        return jsonify({"status": "confirmed", "already_settled": True, "transaction": txn})
+    if txn["status"] != "pending":
+        return jsonify({"status": txn["status"], "transaction": txn})
+
+    provider_name = (txn.get("metadata") or {}).get("provider") or active_provider_name()
+    provider_ref = txn.get("external_ref")
+    if not provider_ref:
+        return jsonify({"error": "transação sem referência de provedor (external_ref)"}), 400
+
+    provider = get_provider(provider_name)
+    try:
+        result = provider.check_status(provider_ref)
+    except NotImplementedError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except requests.RequestException as exc:
+        return jsonify({"error": f"falha ao consultar o provedor {provider_name}: {exc}"}), 502
+
+    if result["status"] == "confirmed":
+        settle = requests.post(f"{LEDGER_URL}/transactions/{transaction_id}/settle", timeout=10)
+        settle.raise_for_status()
+        return jsonify({"status": "confirmed", "transaction": settle.json()})
+    if result["status"] == "failed":
+        fail = requests.post(f"{LEDGER_URL}/transactions/{transaction_id}/fail", timeout=10)
+        fail.raise_for_status()
+        return jsonify({"status": "failed", "transaction": fail.json()})
+
+    return jsonify({"status": "pending", "transaction": txn})
+
+
 @app.post("/_sandbox/simulate-payment")
 def simulate_payment():
     """Atalho só para dev: simula o provedor confirmando o pagamento imediatamente."""
