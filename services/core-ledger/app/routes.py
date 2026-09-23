@@ -37,6 +37,35 @@ def get_account(account_id):
     return jsonify(acc.to_dict())
 
 
+# --- Contas de sistema (pix_pending / card_receivable / crypto_pending) --
+#
+# pix-service, card-service e crypto-service precisam debitar uma conta de
+# "a receber do PSP" antes de creditar o lojista/cliente. Antes, cada
+# serviço exigia isso via variável de ambiente (SYSTEM_PIX_PENDING_ACCOUNT
+# etc.), configurada manualmente no EasyPanel — se esquecida ou vazia, o
+# id da conta virava None/"" e o lançamento quebrava com um 500 cru (erro
+# de integridade no banco, sem mensagem clara). Agora o core-ledger cria
+# essas contas sozinho (auto_get_or_create_system_account) e cada serviço
+# busca o id aqui — sem passo manual, sem curl, sem redeploy.
+
+def _auto_get_or_create_system_account(owner_ref: str) -> str:
+    acc = Account.query.filter_by(owner_ref=owner_ref, kind="system").first()
+    if acc is None:
+        acc = Account(owner_ref=owner_ref, kind="system", allow_negative=True)
+        db.session.add(acc)
+        db.session.commit()
+    return acc.id
+
+
+@bp.get("/admin/settings/system-accounts")
+def get_system_accounts():
+    return jsonify({
+        "pix_pending_account_id": _auto_get_or_create_system_account("system:pix_pending"),
+        "card_receivable_account_id": _auto_get_or_create_system_account("system:card_receivable"),
+        "crypto_pending_account_id": _auto_get_or_create_system_account("system:crypto_pending"),
+    })
+
+
 @bp.post("/transactions")
 def create_transaction():
     """Cria uma transação pendente com N lançamentos que devem somar zero.
@@ -86,6 +115,18 @@ def create_transaction():
                     credit_entry["amount_cents"] = gross - fee_cents
                     entries_in.append({"account_id": platform_account_id, "amount_cents": fee_cents})
 
+    # Valida todas as contas antes de tocar no banco: evita gerar um erro
+    # de integridade sem contexto (500 cru) quando um account_id vier
+    # vazio/None ou apontando pra uma conta que não existe (ex: variável de
+    # ambiente de um dos serviços de rail não configurada).
+    for e in entries_in:
+        account_id = e.get("account_id")
+        if not account_id or not Account.query.get(account_id):
+            return jsonify({
+                "error": "account_id inválido ou ausente em um dos lançamentos",
+                "account_id": account_id,
+            }), 400
+
     txn = Transaction(
         idempotency_key=data["idempotency_key"],
         rail=data["rail"],
@@ -107,12 +148,19 @@ def create_transaction():
 
     try:
         db.session.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         db.session.rollback()
+        # Só existe uma causa legítima pra um IntegrityError aqui: duas
+        # requisições concorrentes com a mesma idempotency_key colidindo.
+        # Qualquer outra causa (account_id inválido, etc.) já devia ter
+        # sido barrada na validação acima — mas se passar, respondemos com
+        # um erro claro em vez de deixar a exceção estourar como 500 cru.
         existing = Transaction.query.filter_by(
             idempotency_key=data["idempotency_key"]
         ).first()
-        return jsonify(existing.to_dict()), 200
+        if existing:
+            return jsonify(existing.to_dict()), 200
+        return jsonify({"error": "falha de integridade ao criar a transação", "detail": str(exc.orig)}), 400
 
     return jsonify(txn.to_dict()), 201
 

@@ -136,9 +136,13 @@ expor publicamente). Dá pra:
 - ver clientes e saldo
 - criar cliente
 - fazer transferência interna
-- gerar uma cobrança PIX de teste (mostra o QR Code e tem botão "simular
-  pagamento" pro fluxo sandbox)
+- gerar uma cobrança PIX/cartão/cripto de teste (mostra o QR Code/link e tem
+  botão "simular pagamento" pro fluxo sandbox)
 - trocar o provedor ativo de PIX/cartão
+- conferir as "Contas do sistema" (as contas internas de "a receber do
+  provedor" que pix/card/crypto-service usam antes de creditar o
+  lojista/cliente) — são criadas sozinhas na primeira cobrança de cada
+  tipo, não precisa configurar nada à mão
 
 Acesse em `http://localhost:8000` (local) ou pelo domínio que você habilitar
 pra esse serviço no EasyPanel.

@@ -16,10 +16,14 @@ from providers import get_provider
 
 app = Flask(__name__)
 LEDGER_URL = os.environ.get("LEDGER_URL", "http://core-ledger:8001")
-SYSTEM_PIX_PENDING_ACCOUNT = os.environ.get("SYSTEM_PIX_PENDING_ACCOUNT")
+# Variável de ambiente é só um jeito avançado de sobrescrever; por padrão
+# a conta de sistema é criada e resolvida sozinha no core-ledger (veja
+# system_pix_pending_account() abaixo), sem precisar configurar nada.
+SYSTEM_PIX_PENDING_ACCOUNT_OVERRIDE = os.environ.get("SYSTEM_PIX_PENDING_ACCOUNT")
 MERCHANT_ACCOUNT = os.environ.get("DEFAULT_MERCHANT_ACCOUNT")
 
 _settings_cache = {"provider": None, "fetched_at": 0}
+_system_account_cache = {"pix_pending_account_id": None, "fetched_at": 0}
 SETTINGS_TTL_SECONDS = 10
 
 
@@ -32,6 +36,18 @@ def active_provider_name() -> str:
         _settings_cache["provider"] = settings.get("pix", "sandbox")
         _settings_cache["fetched_at"] = now
     return _settings_cache["provider"]
+
+
+def system_pix_pending_account() -> str:
+    if SYSTEM_PIX_PENDING_ACCOUNT_OVERRIDE:
+        return SYSTEM_PIX_PENDING_ACCOUNT_OVERRIDE
+    now = time.time()
+    if _system_account_cache["pix_pending_account_id"] is None or now - _system_account_cache["fetched_at"] > SETTINGS_TTL_SECONDS:
+        resp = requests.get(f"{LEDGER_URL}/admin/settings/system-accounts", timeout=5)
+        resp.raise_for_status()
+        _system_account_cache["pix_pending_account_id"] = resp.json()["pix_pending_account_id"]
+        _system_account_cache["fetched_at"] = now
+    return _system_account_cache["pix_pending_account_id"]
 
 
 @app.get("/health")
@@ -57,7 +73,7 @@ def create_charge():
             "rail": "pix",
             "external_ref": charge["provider_ref"],
             "entries": [
-                {"account_id": SYSTEM_PIX_PENDING_ACCOUNT, "amount_cents": -amount_cents},
+                {"account_id": system_pix_pending_account(), "amount_cents": -amount_cents},
                 {"account_id": merchant_account, "amount_cents": amount_cents},
             ],
             "metadata": {"provider": provider_name, "amount_cents": amount_cents},

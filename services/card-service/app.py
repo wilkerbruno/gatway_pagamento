@@ -15,10 +15,14 @@ from providers import get_provider
 
 app = Flask(__name__)
 LEDGER_URL = os.environ.get("LEDGER_URL", "http://core-ledger:8001")
-SYSTEM_CARD_RECEIVABLE_ACCOUNT = os.environ.get("SYSTEM_CARD_RECEIVABLE_ACCOUNT")
+# Variável de ambiente é só um jeito avançado de sobrescrever; por padrão
+# a conta de sistema é criada e resolvida sozinha no core-ledger (veja
+# system_card_receivable_account() abaixo), sem precisar configurar nada.
+SYSTEM_CARD_RECEIVABLE_ACCOUNT_OVERRIDE = os.environ.get("SYSTEM_CARD_RECEIVABLE_ACCOUNT")
 MERCHANT_ACCOUNT = os.environ.get("DEFAULT_MERCHANT_ACCOUNT")
 
 _settings_cache = {"provider": None, "fetched_at": 0}
+_system_account_cache = {"card_receivable_account_id": None, "fetched_at": 0}
 SETTINGS_TTL_SECONDS = 10
 
 
@@ -31,6 +35,18 @@ def active_provider_name() -> str:
         _settings_cache["provider"] = settings.get("card", "sandbox")
         _settings_cache["fetched_at"] = now
     return _settings_cache["provider"]
+
+
+def system_card_receivable_account() -> str:
+    if SYSTEM_CARD_RECEIVABLE_ACCOUNT_OVERRIDE:
+        return SYSTEM_CARD_RECEIVABLE_ACCOUNT_OVERRIDE
+    now = time.time()
+    if _system_account_cache["card_receivable_account_id"] is None or now - _system_account_cache["fetched_at"] > SETTINGS_TTL_SECONDS:
+        resp = requests.get(f"{LEDGER_URL}/admin/settings/system-accounts", timeout=5)
+        resp.raise_for_status()
+        _system_account_cache["card_receivable_account_id"] = resp.json()["card_receivable_account_id"]
+        _system_account_cache["fetched_at"] = now
+    return _system_account_cache["card_receivable_account_id"]
 
 
 @app.get("/health")
@@ -68,7 +84,7 @@ def create_charge():
             "rail": "card",
             "external_ref": result["provider_ref"],
             "entries": [
-                {"account_id": SYSTEM_CARD_RECEIVABLE_ACCOUNT, "amount_cents": -amount_cents},
+                {"account_id": system_card_receivable_account(), "amount_cents": -amount_cents},
                 {"account_id": merchant_account, "amount_cents": amount_cents},
             ],
             "metadata": {"provider": provider_name, "installments": installments},
