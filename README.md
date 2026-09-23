@@ -39,6 +39,8 @@ cp .env.example .env
 docker compose up --build
 ```
 
+Local usa `docker-compose.yml` + `docker-compose.override.yml` juntos (o Compose lê os dois automaticamente) — é o override que publica as portas no seu `localhost`. Em produção (EasyPanel), só o `docker-compose.yml` é usado; o acesso externo é configurado pela aba "Domínios" de cada serviço, apontando pro nome do serviço + porta interna (ex: `admin-panel:8000`), sem precisar publicar porta nenhuma.
+
 Isso sobe os 4 serviços + MySQL + Redis, todos em modo "sandbox" (sem credenciais
 reais de nenhuma rede de pagamento).
 

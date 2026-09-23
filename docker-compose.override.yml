@@ -1,0 +1,26 @@
+# Lido automaticamente pelo `docker compose up` quando rodando LOCAL (não é
+# usado pelo EasyPanel, que só lê docker-compose.yml). Só existe pra publicar
+# as portas no seu localhost e você conseguir testar com curl/navegador —
+# em produção o acesso é via "Domínios" do EasyPanel, sem precisar disso.
+services:
+  mysql:
+    ports:
+      - "3306:3306"
+  redis:
+    ports:
+      - "6379:6379"
+  core-ledger:
+    ports:
+      - "8001:8001"
+  pix-service:
+    ports:
+      - "8002:8002"
+  card-service:
+    ports:
+      - "8003:8003"
+  crypto-service:
+    ports:
+      - "8004:8004"
+  admin-panel:
+    ports:
+      - "8000:8000"
