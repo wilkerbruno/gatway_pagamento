@@ -4,4 +4,4 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 EXPOSE 8001
-CMD ["gunicorn", "-b", "0.0.0.0:8001", "-w", "2", "wsgi:app"]
+CMD ["gunicorn", "-b", "0.0.0.0:8001", "-w", "2", "--preload", "wsgi:app"]
