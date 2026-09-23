@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Admin{% endblock %} · Divisions Pay</title>
+  <title>{% block title %}Minha conta{% endblock %} · Divisions Pay</title>
   <style>
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
@@ -15,51 +15,45 @@
       display: flex; align-items: center; justify-content: space-between;
       padding: 16px 24px; border-bottom: 1px solid #23262e; background: #14161b;
     }
-    header a { color: #e6e6e6; text-decoration: none; font-weight: 600; }
-    nav a { color: #9aa4b2; text-decoration: none; margin-left: 18px; font-size: 14px; }
-    nav a:hover { color: #fff; }
-    main { max-width: 960px; margin: 0 auto; padding: 24px; }
+    header .brand { font-weight: 600; }
+    header form { margin: 0; }
+    header button {
+      background: none; border: 1px solid #2a2e37; color: #9aa4b2;
+      padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
+    }
+    main { max-width: 640px; margin: 0 auto; padding: 24px; }
     h1 { font-size: 22px; margin: 0 0 20px; }
-    h2 { font-size: 16px; color: #9aa4b2; text-transform: uppercase; letter-spacing: .04em; }
+    h2 { font-size: 15px; color: #9aa4b2; text-transform: uppercase; letter-spacing: .04em; }
     table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
     th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #23262e; font-size: 14px; }
     th { color: #9aa4b2; font-weight: 500; }
-    a.btn, button.btn {
-      display: inline-block; background: #2563eb; color: #fff; border: none;
-      padding: 8px 14px; border-radius: 6px; font-size: 14px; cursor: pointer;
-      text-decoration: none;
-    }
-    a.btn.secondary, button.btn.secondary { background: #2a2e37; }
-    a.btn.small { padding: 4px 10px; font-size: 12px; }
-    .actions { display: flex; gap: 10px; margin-bottom: 20px; }
-    form.card, .card {
+    .card {
       background: #14161b; border: 1px solid #23262e; border-radius: 10px;
-      padding: 20px; margin-bottom: 20px;
+      padding: 24px; margin-bottom: 20px; text-align: center;
     }
+    .balance { font-size: 32px; font-weight: 700; }
+    .balance-label { color: #9aa4b2; font-size: 13px; margin-bottom: 6px; }
     label { display: block; font-size: 13px; color: #9aa4b2; margin: 12px 0 4px; }
-    input, select {
-      width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a2e37;
+    input {
+      width: 100%; padding: 10px 12px; border-radius: 6px; border: 1px solid #2a2e37;
       background: #0f1115; color: #e6e6e6; font-size: 14px;
+    }
+    button.btn {
+      width: 100%; background: #2563eb; color: #fff; border: none;
+      padding: 12px; border-radius: 6px; font-size: 15px; cursor: pointer; margin-top: 16px;
     }
     .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; }
     .flash.success { background: #14301f; color: #6ee7a0; border: 1px solid #1f4a2c; }
     .flash.error { background: #3a1616; color: #ff9b9b; border: 1px solid #5a1f1f; }
-    .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; color: #9aa4b2; }
-    .balance { font-size: 20px; font-weight: 600; }
   </style>
 </head>
 <body>
+  {% if session.get('customer_id') %}
   <header>
-    <a href="{{ url_for('dashboard') }}">💳 Divisions Pay — Admin</a>
-    <nav>
-      <a href="{{ url_for('dashboard') }}">Clientes</a>
-      <a href="{{ url_for('transfer_form') }}">Transferência</a>
-      <a href="{{ url_for('pix_new_form') }}">Gerar PIX</a>
-      <a href="{{ url_for('crypto_new_form') }}">Gerar cripto</a>
-      <a href="{{ url_for('providers_form') }}">Provedores</a>
-      <a href="{{ url_for('platform_settings_form') }}">Taxa</a>
-    </nav>
+    <span class="brand">💳 Divisions Pay</span>
+    <form method="post" action="{{ url_for('logout') }}"><button type="submit">Sair</button></form>
   </header>
+  {% endif %}
   <main>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}

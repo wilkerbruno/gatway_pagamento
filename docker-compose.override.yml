@@ -24,3 +24,6 @@ services:
   admin-panel:
     ports:
       - "8000:8000"
+  customer-portal:
+    ports:
+      - "8006:8006"

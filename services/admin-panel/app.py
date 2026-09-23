@@ -86,6 +86,7 @@ def new_customer_submit():
         "document": request.form.get("document") or None,
         "email": request.form.get("email") or None,
         "kind": request.form.get("kind", "customer"),
+        "password": request.form.get("password") or None,
     })
     if resp.status_code >= 400:
         flash(f"Erro ao criar cliente: {resp.text}", "error")
@@ -124,6 +125,29 @@ def transfer_submit():
     else:
         flash("Transferência concluída.", "success")
     return redirect(url_for("dashboard"))
+
+
+@app.get("/settings/platform")
+@require_auth
+def platform_settings_form():
+    customers = api_get(LEDGER_URL, "/customers?limit=200")
+    settings = api_get(LEDGER_URL, "/admin/settings/platform")
+    return render_template("platform_settings.html", customers=customers, settings=settings)
+
+
+@app.post("/settings/platform")
+@require_auth
+def platform_settings_submit():
+    fee_bps = int(round(float(request.form["fee_percent"].replace(",", ".")) * 100))
+    resp = api_put(LEDGER_URL, "/admin/settings/platform", json={
+        "platform_account_id": request.form["platform_account_id"],
+        "fee_bps": fee_bps,
+    })
+    if resp.status_code >= 400:
+        flash(f"Erro ao salvar: {resp.text}", "error")
+    else:
+        flash("Taxa da plataforma atualizada.", "success")
+    return redirect(url_for("platform_settings_form"))
 
 
 @app.get("/crypto/new")

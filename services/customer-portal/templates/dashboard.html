@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Minha conta{% endblock %}
+{% block content %}
+  <h1>Olá, {{ customer.name }}</h1>
+  <div class="card">
+    <div class="balance-label">Saldo disponível</div>
+    <div class="balance">R$ {{ "%.2f"|format(customer.account.balance_cents / 100) }}</div>
+  </div>
+
+  <h2>Histórico</h2>
+  {% if statement.entries %}
+  <table>
+    <tr><th>Data</th><th>Tipo</th><th>Valor</th></tr>
+    {% for e in statement.entries %}
+    <tr>
+      <td>{{ e.created_at[:16].replace('T', ' ') }}</td>
+      <td>
+        {% if e.rail == 'internal_transfer' %}Transferência
+        {% elif e.rail == 'pix' %}PIX
+        {% elif e.rail == 'card' %}Cartão
+        {% elif e.rail == 'crypto' %}Cripto
+        {% else %}{{ e.rail }}{% endif %}
+      </td>
+      <td style="color: {{ '#ff9b9b' if e.amount_cents < 0 else '#6ee7a0' }};">
+        {{ '+' if e.amount_cents > 0 else '' }}R$ {{ "%.2f"|format(e.amount_cents / 100) }}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p>Nenhuma movimentação ainda.</p>
+  {% endif %}
+{% endblock %}

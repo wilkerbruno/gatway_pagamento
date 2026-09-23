@@ -74,6 +74,15 @@ services:
       - core-ledger
       - pix-service
 
+
+  customer-portal:
+    build: ./services/customer-portal
+    environment:
+      LEDGER_URL: http://core-ledger:8001
+      CUSTOMER_PORTAL_SECRET: ${CUSTOMER_PORTAL_SECRET:-troque-isto}
+    depends_on:
+      - core-ledger
+
 volumes:
   mysqldata:
   cryptodata:

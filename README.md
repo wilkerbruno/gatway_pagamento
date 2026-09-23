@@ -1,4 +1,4 @@
-# Gateway de Pagamentos — Projeto
+# Divisions Pay — Gateway de Pagamentos
 
 > **Leia `docs/COMPLIANCE.md` antes de escrever qualquer linha de código de produção.**
 > Este repositório é o esqueleto de um **motor de pagamentos**, não um produto pronto para
@@ -142,3 +142,28 @@ expor publicamente). Dá pra:
 
 Acesse em `http://localhost:8000` (local) ou pelo domínio que você habilitar
 pra esse serviço no EasyPanel.
+
+
+## Portal do cliente (customer-portal)
+
+Serviço separado do admin-panel, na porta 8006. Cada cliente loga com o
+próprio CPF/CNPJ ou e-mail + a senha que o admin definiu pra ele (campo
+opcional no formulário "Novo cliente" do admin-panel) e só vê o **próprio**
+saldo e extrato — sessão isolada por cliente, sem acesso a nenhum dado de
+outros clientes ou às telas administrativas.
+
+Pra dar acesso a um cliente que já existe sem senha, chame direto no
+core-ledger: `PUT /customers/<id>/password` com `{"password": "..."}`.
+
+## Taxa da plataforma (1% por padrão)
+
+Configurável em **Taxa** no admin-panel: escolhe qual conta recebe e o
+percentual (padrão 1%). A partir daí, toda cobrança recebida via PIX, cartão
+ou cripto tem esse percentual descontado automaticamente do valor creditado
+ao lojista/cliente e transferido pra essa conta — **além** de qualquer taxa
+que o Mercado Pago/Pagar.me já cobrem por fora (essa taxa deles não passa
+pelo seu sistema, é descontada antes de você receber o valor líquido deles).
+
+Não incide em transferências internas (`/transfers`) — só nas cobranças que
+entram de fora pela primeira vez. Enquanto nenhuma conta estiver configurada,
+nenhuma taxa é cobrada (comportamento padrão, opt-in).

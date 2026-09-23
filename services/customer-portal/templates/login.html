@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Entrar{% endblock %}
+{% block content %}
+  <h1 style="text-align:center;">💳 Divisions Pay</h1>
+  <form class="card" method="post" action="{{ url_for('login_submit') }}" style="text-align:left;">
+    <label>CPF/CNPJ ou e-mail</label>
+    <input type="text" name="login" required autofocus>
+    <label>Senha</label>
+    <input type="password" name="password" required>
+    <button class="btn" type="submit">Entrar</button>
+  </form>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Taxa da plataforma{% endblock %}
+{% block content %}
+  <h1>Taxa da plataforma</h1>
+  <p style="color:#9aa4b2;font-size:14px;">
+    A cada cobrança recebida via PIX, cartão ou cripto, esse percentual é
+    descontado automaticamente do valor creditado ao lojista/cliente e vai
+    direto pra conta da plataforma abaixo — em cima de qualquer taxa que o
+    Mercado Pago/Pagar.me já cobrem por fora. Não incide em transferências
+    internas entre carteiras.
+  </p>
+  <form class="card" method="post" action="{{ url_for('platform_settings_submit') }}">
+    <label>Conta que recebe a taxa</label>
+    <select name="platform_account_id" required>
+      <option value="">— selecione —</option>
+      {% for c in customers %}
+      <option value="{{ c.account.id }}" {% if c.account.id == settings.platform_account_id %}selected{% endif %}>
+        {{ c.name }} (saldo atual: R$ {{ "%.2f"|format(c.account.balance_cents / 100) }})
+      </option>
+      {% endfor %}
+    </select>
+    <label>Percentual (%)</label>
+    <input type="text" name="fee_percent" value="{{ "%.2f"|format(settings.fee_bps / 100) }}" required>
+    <br><br>
+    <button class="btn" type="submit">Salvar</button>
+  </form>
+  {% if not settings.platform_account_id %}
+  <p style="color:#ff9b9b;">Nenhuma conta configurada ainda — nenhuma taxa está sendo cobrada.</p>
+  {% endif %}
+{% endblock %}

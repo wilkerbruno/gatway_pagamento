@@ -1,7 +1,8 @@
 from flask import Blueprint, request, jsonify
 from sqlalchemy.exc import IntegrityError
+from werkzeug.security import generate_password_hash, check_password_hash
 
-from .models import db, Account, Transaction, LedgerEntry, WebhookEvent, EntryStatus
+from .models import db, Account, Transaction, LedgerEntry, WebhookEvent, EntryStatus, PlatformSetting
 
 bp = Blueprint("ledger", __name__)
 
@@ -60,10 +61,30 @@ def create_transaction():
         # nunca duplica o lançamento.
         return jsonify(existing.to_dict()), 200
 
-    entries_in = data["entries"]
+    entries_in = list(data["entries"])
     total = sum(e["amount_cents"] for e in entries_in)
     if total != 0:
         return jsonify({"error": "entries must sum to zero (double-entry)"}), 400
+
+    # Taxa de plataforma: em cobrancas recebidas via pix/card/crypto (2
+    # lancamentos: um debito na conta de sistema do PSP, um credito na
+    # carteira que recebe), retira fee_bps do valor creditado e manda pra
+    # conta da plataforma. So age se a conta da plataforma estiver
+    # configurada (opt-in) e a transacao tiver exatamente esse formato de
+    # 2 entradas. Transferencias internas (/transfers) nao passam por aqui.
+    if data["rail"] in ("pix", "card", "crypto") and len(entries_in) == 2:
+        platform_account_row = PlatformSetting.query.get("platform_account_id")
+        fee_bps_row = PlatformSetting.query.get("fee_bps")
+        if platform_account_row and platform_account_row.value:
+            fee_bps = int(fee_bps_row.value) if fee_bps_row and fee_bps_row.value else 100
+            platform_account_id = platform_account_row.value
+            credit_entry = next((e for e in entries_in if e["amount_cents"] > 0), None)
+            if credit_entry and credit_entry["account_id"] != platform_account_id and fee_bps > 0:
+                gross = credit_entry["amount_cents"]
+                fee_cents = round(gross * fee_bps / 10000)
+                if 0 < fee_cents < gross:
+                    credit_entry["amount_cents"] = gross - fee_cents
+                    entries_in.append({"account_id": platform_account_id, "amount_cents": fee_cents})
 
     txn = Transaction(
         idempotency_key=data["idempotency_key"],
@@ -212,7 +233,9 @@ def list_customers():
 
 @bp.post("/customers")
 def create_customer():
-    """Cria um cliente e já abre a carteira (Account) dele junto."""
+    """Cria um cliente e já abre a carteira (Account) dele junto.
+    "password" é opcional — só preencha se esse cliente vai ter acesso ao
+    portal próprio (customer-portal)."""
     data = request.get_json(force=True)
     acc = Account(
         owner_ref=data.get("document") or data["name"],
@@ -223,15 +246,81 @@ def create_customer():
     db.session.add(acc)
     db.session.flush()
 
+    password = data.get("password")
     customer = Customer(
         account_id=acc.id,
         name=data["name"],
         document=data.get("document"),
         email=data.get("email"),
+        password_hash=generate_password_hash(password) if password else None,
     )
     db.session.add(customer)
     db.session.commit()
     return jsonify(customer.to_dict()), 201
+
+
+@bp.post("/customers/authenticate")
+def authenticate_customer():
+    """Login do portal do cliente: verifica documento/e-mail + senha.
+    Retorna o cliente se bater, 401 caso contrario. Nao expoe password_hash."""
+    data = request.get_json(force=True)
+    login = data.get("login", "")
+    password = data.get("password", "")
+
+    customer = Customer.query.filter(
+        (Customer.document == login) | (Customer.email == login)
+    ).first()
+
+    if not customer or not customer.password_hash or not check_password_hash(customer.password_hash, password):
+        return jsonify({"error": "credenciais invalidas"}), 401
+
+    return jsonify(customer.to_dict())
+
+
+@bp.put("/customers/<customer_id>/password")
+def set_customer_password(customer_id):
+    """Define/troca a senha de acesso ao portal (chamado pelo admin-panel
+    quando o admin cria/reseta o acesso de um cliente)."""
+    customer = Customer.query.get_or_404(customer_id)
+    data = request.get_json(force=True)
+    password = data.get("password")
+    if not password or len(password) < 6:
+        return jsonify({"error": "senha precisa ter pelo menos 6 caracteres"}), 400
+    customer.password_hash = generate_password_hash(password)
+    db.session.commit()
+    return jsonify(customer.to_dict())
+
+
+# --- Configuracoes da plataforma: conta e percentual da taxa -------------
+
+@bp.get("/admin/settings/platform")
+def get_platform_settings():
+    rows = {r.key: r.value for r in PlatformSetting.query.all()}
+    return jsonify({
+        "platform_account_id": rows.get("platform_account_id"),
+        "fee_bps": int(rows.get("fee_bps", 100)),
+    })
+
+
+@bp.put("/admin/settings/platform")
+def set_platform_settings():
+    data = request.get_json(force=True)
+    for key in ("platform_account_id", "fee_bps"):
+        if key not in data:
+            continue
+        row = PlatformSetting.query.get(key)
+        value = str(data[key]) if data[key] is not None else None
+        if row is None:
+            row = PlatformSetting(key=key, value=value)
+            db.session.add(row)
+        else:
+            row.value = value
+    db.session.commit()
+    rows = {r.key: r.value for r in PlatformSetting.query.all()}
+    return jsonify({
+        "platform_account_id": rows.get("platform_account_id"),
+        "fee_bps": int(rows.get("fee_bps", 100)),
+    })
 
 
 @bp.get("/customers/<customer_id>")

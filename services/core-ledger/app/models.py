@@ -131,7 +131,10 @@ class ProviderSetting(db.Model):
 
 class Customer(db.Model):
     """Titular de uma carteira (pode ser pessoa física ou o próprio lojista).
-    Cada Customer tem uma Account 1:1 (kind='customer' ou 'merchant')."""
+    Cada Customer tem uma Account 1:1 (kind='customer' ou 'merchant').
+    password_hash é opcional — só é preenchido quando o cliente ganha acesso
+    ao portal próprio dele (customer-portal). Contas criadas só pelo admin,
+    sem senha, continuam existindo normalmente, só não conseguem logar."""
 
     __tablename__ = "customers"
 
@@ -140,6 +143,7 @@ class Customer(db.Model):
     name = db.Column(db.String(255), nullable=False)
     document = db.Column(db.String(32), nullable=True)  # CPF/CNPJ
     email = db.Column(db.String(255), nullable=True)
+    password_hash = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
     account = db.relationship("Account")
@@ -150,5 +154,22 @@ class Customer(db.Model):
             "name": self.name,
             "document": self.document,
             "email": self.email,
+            "has_login": self.password_hash is not None,
             "account": self.account.to_dict(),
         }
+
+
+class PlatformSetting(db.Model):
+    """Configuração chave/valor simples da plataforma: qual conta recebe a
+    taxa de 1% (platform_account_id) e o percentual em si (fee_bps, em
+    pontos-base — 100 = 1%). Enquanto platform_account_id não estiver
+    configurado, nenhuma taxa é cobrada (comportamento opt-in, pra não
+    quebrar quem ainda não configurou)."""
+
+    __tablename__ = "platform_settings"
+
+    key = db.Column(db.String(50), primary_key=True)
+    value = db.Column(db.String(255), nullable=True)
+
+    def to_dict(self):
+        return {"key": self.key, "value": self.value}
