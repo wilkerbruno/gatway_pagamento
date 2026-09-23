@@ -1,33 +1,87 @@
 {% extends "base.html" %}
-{% block title %}Minha conta{% endblock %}
+{% block title %}Início — Divisions Pay{% endblock %}
+{% set active_tab = 'home' %}
 {% block content %}
-  <h1>Olá, {{ customer.name }}</h1>
-  <div class="card">
-    <div class="balance-label">Saldo disponível</div>
-    <div class="balance">R$ {{ "%.2f"|format(customer.account.balance_cents / 100) }}</div>
-  </div>
 
-  <h2>Histórico</h2>
-  {% if statement.entries %}
-  <table>
-    <tr><th>Data</th><th>Tipo</th><th>Valor</th></tr>
-    {% for e in statement.entries %}
-    <tr>
-      <td>{{ e.created_at[:16].replace('T', ' ') }}</td>
-      <td>
-        {% if e.rail == 'internal_transfer' %}Transferência
-        {% elif e.rail == 'pix' %}PIX
-        {% elif e.rail == 'card' %}Cartão
-        {% elif e.rail == 'crypto' %}Cripto
-        {% else %}{{ e.rail }}{% endif %}
-      </td>
-      <td style="color: {{ '#ff9b9b' if e.amount_cents < 0 else '#6ee7a0' }};">
-        {{ '+' if e.amount_cents > 0 else '' }}R$ {{ "%.2f"|format(e.amount_cents / 100) }}
-      </td>
-    </tr>
-    {% endfor %}
-  </table>
-  {% else %}
-  <p>Nenhuma movimentação ainda.</p>
-  {% endif %}
+<div style="font-size:13px;color:var(--text-dim);margin-bottom:2px;">Olá,</div>
+<div style="font-size:20px;font-weight:700;margin-bottom:18px;">{{ customer.name.split(' ')[0] }} 👋</div>
+
+<div class="card" style="background: linear-gradient(135deg, #7c5cff 0%, #5a3fe0 100%); border:none; position:relative; overflow:hidden;">
+  <div style="position:absolute; top:-40px; right:-40px; width:140px; height:140px; border-radius:50%; background:rgba(255,255,255,0.08);"></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <div style="font-size:13px; color:rgba(255,255,255,0.75); font-weight:600;">Saldo disponível</div>
+    <button type="button" onclick="toggleBalance()" id="eye-btn" style="background:none;border:none;color:rgba(255,255,255,0.75);cursor:pointer;font-size:16px;">🙈</button>
+  </div>
+  <div id="balance-value" style="font-size:34px;font-weight:800;color:#fff;margin-top:6px;letter-spacing:-0.02em;">
+    R$ {{ balance_display }}
+  </div>
+  <div style="font-size:12px;color:rgba(255,255,255,0.65);margin-top:4px;">Conta {{ customer.account.currency }} · Divisions Pay</div>
+</div>
+
+<div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin: 20px 0;">
+  <a href="{{ url_for('transfer_form') }}" style="text-decoration:none; text-align:center;">
+    <div style="width:52px;height:52px;border-radius:16px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:22px;margin:0 auto 6px;">↗️</div>
+    <div style="font-size:11px;color:var(--text-dim);font-weight:600;">Transferir</div>
+  </a>
+  <a href="{{ url_for('profile') }}" style="text-decoration:none; text-align:center;">
+    <div style="width:52px;height:52px;border-radius:16px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:22px;margin:0 auto 6px;">🔑</div>
+    <div style="font-size:11px;color:var(--text-dim);font-weight:600;">Meus dados</div>
+  </a>
+  <a href="{{ url_for('extrato') }}" style="text-decoration:none; text-align:center;">
+    <div style="width:52px;height:52px;border-radius:16px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:22px;margin:0 auto 6px;">🧾</div>
+    <div style="font-size:11px;color:var(--text-dim);font-weight:600;">Extrato</div>
+  </a>
+  <form method="post" action="{{ url_for('logout') }}" style="margin:0;">
+    <button type="submit" style="all:unset; cursor:pointer; text-align:center; display:block; width:100%;">
+      <div style="width:52px;height:52px;border-radius:16px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:22px;margin:0 auto 6px;">🚪</div>
+      <div style="font-size:11px;color:var(--text-dim);font-weight:600;">Sair</div>
+    </button>
+  </form>
+</div>
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+  <div style="font-size:15px;font-weight:700;">Últimas movimentações</div>
+  <a href="{{ url_for('extrato') }}" style="font-size:13px;color:var(--brand);text-decoration:none;font-weight:600;">Ver tudo</a>
+</div>
+
+{% if statement.entries %}
+<div class="card" style="padding: 6px 18px;">
+  {% for e in statement.entries %}
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0; {% if not loop.last %}border-bottom:1px solid var(--border);{% endif %}">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <div style="width:38px;height:38px;border-radius:50%;background:{{ 'rgba(53,208,127,0.12)' if e.is_credit else 'rgba(255,92,114,0.12)' }};display:flex;align-items:center;justify-content:center;font-size:16px;">
+        {{ '⬇️' if e.is_credit else '⬆️' }}
+      </div>
+      <div>
+        <div style="font-size:14px;font-weight:600;">{{ e.rail_label }}</div>
+        <div style="font-size:12px;color:var(--text-dim);">{{ e.created_at[:10] }}</div>
+      </div>
+    </div>
+    <div style="font-size:14px;font-weight:700;color:{{ 'var(--success)' if e.is_credit else 'var(--text)' }};">
+      {{ '+' if e.is_credit else '-' }} R$ {{ e.amount_display }}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card" style="text-align:center; color:var(--text-dim); padding: 30px 18px;">
+  Nenhuma movimentação ainda.
+</div>
+{% endif %}
+
+<script>
+  let visible = true;
+  function toggleBalance(){
+    visible = !visible;
+    const el = document.getElementById('balance-value');
+    const btn = document.getElementById('eye-btn');
+    if (visible){
+      el.textContent = "R$ {{ balance_display }}";
+      btn.textContent = "🙈";
+    } else {
+      el.textContent = "R$ ••••••";
+      btn.textContent = "👁️";
+    }
+  }
+</script>
 {% endblock %}

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Transferir — Divisions Pay{% endblock %}
+{% set active_tab = 'transfer' %}
+{% block content %}
+
+<div style="font-size:20px;font-weight:800;margin-bottom:4px;">Transferir</div>
+<div style="font-size:13px;color:var(--text-dim);margin-bottom:18px;">
+  Saldo disponível: <strong style="color:var(--text);">R$ {{ balance_display }}</strong>
+</div>
+
+<form method="post" action="{{ url_for('transfer_submit') }}" class="card">
+  <label>Para quem vai (CPF/CNPJ ou e-mail)</label>
+  <input type="text" name="recipient" placeholder="000.000.000-00 ou destino@email.com" required autofocus>
+
+  <label>Valor</label>
+  <input type="text" name="amount" inputmode="decimal" placeholder="0,00" required>
+
+  <label>Mensagem (opcional)</label>
+  <input type="text" name="note" placeholder="Ex: aluguel, combinado, etc.">
+
+  <button type="submit" class="btn">Transferir agora</button>
+</form>
+
+<div style="text-align:center; color:var(--text-dim); font-size:12px; margin-top:16px; line-height:1.5;">
+  Transferências entre contas Divisions Pay são internas: caem na hora,<br>sem taxa e sem passar por Pix ou TED.
+</div>
+{% endblock %}

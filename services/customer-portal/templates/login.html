@@ -1,12 +1,25 @@
 {% extends "base.html" %}
-{% block title %}Entrar{% endblock %}
+{% block title %}Entrar — Divisions Pay{% endblock %}
 {% block content %}
-  <h1 style="text-align:center;">💳 Divisions Pay</h1>
-  <form class="card" method="post" action="{{ url_for('login_submit') }}" style="text-align:left;">
+<div style="min-height: calc(100vh - 160px); display:flex; flex-direction:column; justify-content:center;">
+  <div style="text-align:center; margin-bottom: 36px;">
+    <div style="width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg, var(--brand), #5a3fe0);display:flex;align-items:center;justify-content:center;font-size:30px;margin:0 auto 16px;">💳</div>
+    <div style="font-size:22px;font-weight:800;letter-spacing:-0.02em;">Divisions Pay</div>
+    <div style="color:var(--text-dim);font-size:14px;margin-top:4px;">Sua conta digital, do jeito Divisions</div>
+  </div>
+
+  <form method="post" action="{{ url_for('login_submit') }}" class="card">
     <label>CPF/CNPJ ou e-mail</label>
-    <input type="text" name="login" required autofocus>
+    <input type="text" name="login" placeholder="000.000.000-00 ou voce@email.com" required autofocus>
+
     <label>Senha</label>
-    <input type="password" name="password" required>
-    <button class="btn" type="submit">Entrar</button>
+    <input type="password" name="password" placeholder="••••••••" required>
+
+    <button type="submit" class="btn">Entrar</button>
   </form>
+
+  <div style="text-align:center; color:var(--text-dim); font-size:13px; margin-top:20px;">
+    Esqueceu a senha ou ainda não tem acesso?<br>Fale com quem administra sua conta.
+  </div>
+</div>
 {% endblock %}

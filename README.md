@@ -146,11 +146,26 @@ pra esse serviço no EasyPanel.
 
 ## Portal do cliente (customer-portal)
 
-Serviço separado do admin-panel, na porta 8006. Cada cliente loga com o
-próprio CPF/CNPJ ou e-mail + a senha que o admin definiu pra ele (campo
-opcional no formulário "Novo cliente" do admin-panel) e só vê o **próprio**
-saldo e extrato — sessão isolada por cliente, sem acesso a nenhum dado de
-outros clientes ou às telas administrativas.
+Serviço separado do admin-panel, na porta 8006, com visual de banco digital
+(estilo PicPay) já pensado pra virar app mobile depois: cartão de saldo com
+o valor escondível, ações rápidas, navegação inferior fixa (Início /
+Transferir / Extrato / Perfil) e tema escuro.
+
+Cada cliente loga com o próprio CPF/CNPJ ou e-mail + a senha que o admin
+definiu pra ele (campo opcional no formulário "Novo cliente" do admin-panel)
+e só vê os **próprios** dados — sessão isolada por cliente, sem acesso a
+nenhum dado de outros clientes ou às telas administrativas.
+
+Telas do portal:
+- **Início** — saldo (com botão de mostrar/esconder), atalhos e as últimas
+  movimentações
+- **Transferir** — o próprio cliente manda dinheiro pra outro cliente da
+  Divisions Pay direto por aqui (busca o destinatário por CPF/CNPJ ou
+  e-mail via `GET /customers/lookup`, que só confirma se existe — nunca
+  expõe a lista de clientes pra quem está logado); cai na hora, sem taxa,
+  é só um lançamento em partida dobrada via `POST /transfers`
+- **Extrato** — histórico completo, paginado
+- **Perfil** — dados da conta e sair
 
 Pra dar acesso a um cliente que já existe sem senha, chame direto no
 core-ledger: `PUT /customers/<id>/password` com `{"password": "..."}`.

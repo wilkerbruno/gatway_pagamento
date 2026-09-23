@@ -231,6 +231,30 @@ def list_customers():
     return jsonify([c.to_dict() for c in customers])
 
 
+@bp.get("/customers/lookup")
+def lookup_customer():
+    """Resolve um destinatário de transferência pelo documento ou e-mail,
+    sem expor a lista completa de clientes (usado pelo customer-portal:
+    o cliente logado nunca vê quem mais existe na plataforma, só confirma
+    que o destinatário que ele digitou existe)."""
+    login = (request.args.get("login") or "").strip()
+    exclude_customer_id = request.args.get("exclude_customer_id")
+    if not login:
+        return jsonify({"error": "informe documento ou e-mail"}), 400
+
+    customer = Customer.query.filter(
+        (Customer.document == login) | (Customer.email == login)
+    ).first()
+    if not customer or customer.id == exclude_customer_id:
+        return jsonify({"error": "cliente nao encontrado"}), 404
+
+    return jsonify({
+        "id": customer.id,
+        "name": customer.name,
+        "account_id": customer.account_id,
+    })
+
+
 @bp.post("/customers")
 def create_customer():
     """Cria um cliente e já abre a carteira (Account) dele junto.

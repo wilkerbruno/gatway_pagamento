@@ -1,66 +1,204 @@
 <!doctype html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Minha conta{% endblock %} · Divisions Pay</title>
-  <style>
-    :root { color-scheme: dark; }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-      background: #0f1115; color: #e6e6e6;
-    }
-    header {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 16px 24px; border-bottom: 1px solid #23262e; background: #14161b;
-    }
-    header .brand { font-weight: 600; }
-    header form { margin: 0; }
-    header button {
-      background: none; border: 1px solid #2a2e37; color: #9aa4b2;
-      padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
-    }
-    main { max-width: 640px; margin: 0 auto; padding: 24px; }
-    h1 { font-size: 22px; margin: 0 0 20px; }
-    h2 { font-size: 15px; color: #9aa4b2; text-transform: uppercase; letter-spacing: .04em; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
-    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #23262e; font-size: 14px; }
-    th { color: #9aa4b2; font-weight: 500; }
-    .card {
-      background: #14161b; border: 1px solid #23262e; border-radius: 10px;
-      padding: 24px; margin-bottom: 20px; text-align: center;
-    }
-    .balance { font-size: 32px; font-weight: 700; }
-    .balance-label { color: #9aa4b2; font-size: 13px; margin-bottom: 6px; }
-    label { display: block; font-size: 13px; color: #9aa4b2; margin: 12px 0 4px; }
-    input {
-      width: 100%; padding: 10px 12px; border-radius: 6px; border: 1px solid #2a2e37;
-      background: #0f1115; color: #e6e6e6; font-size: 14px;
-    }
-    button.btn {
-      width: 100%; background: #2563eb; color: #fff; border: none;
-      padding: 12px; border-radius: 6px; font-size: 15px; cursor: pointer; margin-top: 16px;
-    }
-    .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; }
-    .flash.success { background: #14301f; color: #6ee7a0; border: 1px solid #1f4a2c; }
-    .flash.error { background: #3a1616; color: #ff9b9b; border: 1px solid #5a1f1f; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>{% block title %}Divisions Pay{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #0d0f14;
+    --surface: #161922;
+    --surface-2: #1f2330;
+    --border: #2a2f3d;
+    --brand: #7c5cff;
+    --brand-2: #35d07f;
+    --text: #f4f5f8;
+    --text-dim: #9aa0b4;
+    --danger: #ff5c72;
+    --success: #35d07f;
+    --radius: 18px;
+    --radius-sm: 12px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app-shell{
+    max-width: 480px;
+    margin: 0 auto;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    background: var(--bg);
+  }
+  .topbar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding: 20px 20px 8px;
+  }
+  .brand{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    font-weight:800;
+    font-size:17px;
+    letter-spacing:-0.02em;
+  }
+  .brand-mark{
+    width:32px;height:32px;border-radius:9px;
+    background: linear-gradient(135deg, var(--brand), #5a3fe0);
+    display:flex;align-items:center;justify-content:center;
+    font-size:16px;
+  }
+  .avatar{
+    width:36px;height:36px;border-radius:50%;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    display:flex;align-items:center;justify-content:center;
+    font-weight:700;font-size:14px;color:var(--text-dim);
+    text-decoration:none;
+  }
+  main{
+    flex: 1;
+    padding: 8px 20px 100px;
+  }
+  .flash{
+    padding: 12px 16px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 14px;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .flash-error{ background: rgba(255,92,114,0.12); color: var(--danger); border:1px solid rgba(255,92,114,0.3); }
+  .flash-success{ background: rgba(53,208,127,0.12); color: var(--success); border:1px solid rgba(53,208,127,0.3); }
+
+  .card{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px;
+  }
+
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    background: var(--brand);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 14px 18px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    width: 100%;
+    text-decoration: none;
+    transition: opacity .15s;
+  }
+  .btn:active{ opacity: .8; }
+  .btn-secondary{
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  input, select{
+    width:100%;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 13px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 15px;
+    font-family: inherit;
+    margin-bottom: 14px;
+  }
+  input:focus, select:focus{ outline: none; border-color: var(--brand); }
+  label{
+    display:block;
+    font-size: 13px;
+    font-weight:600;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+
+  .bottom-nav{
+    position: sticky;
+    bottom: 0;
+    left:0; right:0;
+    max-width: 480px;
+    margin: 0 auto;
+    background: rgba(22,25,34,0.92);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border);
+    display:flex;
+    padding: 10px 8px calc(10px + env(safe-area-inset-bottom));
+  }
+  .nav-item{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:4px;
+    text-decoration:none;
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 0;
+    border-radius: 10px;
+  }
+  .nav-item .nav-icon{ font-size: 20px; line-height:1; }
+  .nav-item.active{ color: var(--brand); }
+
+  ::selection{ background: var(--brand); color:#fff; }
+</style>
 </head>
 <body>
-  {% if session.get('customer_id') %}
-  <header>
-    <span class="brand">💳 Divisions Pay</span>
-    <form method="post" action="{{ url_for('logout') }}"><button type="submit">Sair</button></form>
-  </header>
-  {% endif %}
+<div class="app-shell">
+  <div class="topbar">
+    <div class="brand">
+      <div class="brand-mark">💳</div>
+      Divisions Pay
+    </div>
+    {% if customer %}
+    <a href="{{ url_for('profile') }}" class="avatar">{{ customer.name[:1].upper() }}</a>
+    {% endif %}
+  </div>
+
   <main>
     {% with messages = get_flashed_messages(with_categories=true) %}
-      {% for category, message in messages %}
-        <div class="flash {{ category }}">{{ message }}</div>
-      {% endfor %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
     {% endwith %}
+
     {% block content %}{% endblock %}
   </main>
+
+  {% if customer %}
+  <nav class="bottom-nav">
+    <a href="{{ url_for('dashboard') }}" class="nav-item {{ 'active' if active_tab == 'home' else '' }}">
+      <span class="nav-icon">🏠</span>Início
+    </a>
+    <a href="{{ url_for('transfer_form') }}" class="nav-item {{ 'active' if active_tab == 'transfer' else '' }}">
+      <span class="nav-icon">↗️</span>Transferir
+    </a>
+    <a href="{{ url_for('extrato') }}" class="nav-item {{ 'active' if active_tab == 'extrato' else '' }}">
+      <span class="nav-icon">🧾</span>Extrato
+    </a>
+    <a href="{{ url_for('profile') }}" class="nav-item {{ 'active' if active_tab == 'profile' else '' }}">
+      <span class="nav-icon">👤</span>Perfil
+    </a>
+  </nav>
+  {% endif %}
+</div>
 </body>
 </html>
