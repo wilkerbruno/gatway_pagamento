@@ -86,6 +86,18 @@ class PagarmeCardProvider(CardProvider):
         }
 
 
+class SandboxCardProvider(CardProvider):
+    """Aprova qualquer cobranca sem chamar nenhuma adquirente de verdade —
+    pra testar o fluxo sem precisar de chave do Mercado Pago/Pagar.me."""
+
+    def charge(self, card_token, amount_cents, installments, external_reference):
+        return {
+            "approved": True,
+            "provider_ref": f"SANDBOX{external_reference}",
+            "raw_status": "approved",
+        }
+
+
 class DirectCardProvider(CardProvider):
     """Processar cartão sem nenhuma adquirente/subadquirente por trás exige
     você mesmo virar uma credenciadora licenciada pelas bandeiras — um
@@ -104,6 +116,7 @@ class DirectCardProvider(CardProvider):
 
 def get_provider(name: str) -> CardProvider:
     providers = {
+        "sandbox": SandboxCardProvider,
         "mercadopago": MercadoPagoCardProvider,
         "pagarme": PagarmeCardProvider,
         "direct": DirectCardProvider,

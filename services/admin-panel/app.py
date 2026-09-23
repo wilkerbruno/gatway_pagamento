@@ -126,6 +126,40 @@ def transfer_submit():
     return redirect(url_for("dashboard"))
 
 
+@app.get("/crypto/new")
+@require_auth
+def crypto_new_form():
+    customers = api_get(LEDGER_URL, "/customers?limit=200")
+    return render_template("crypto_new.html", customers=customers)
+
+
+@app.post("/crypto/new")
+@require_auth
+def crypto_new_submit():
+    amount_cents = int(round(float(request.form["amount_brl"].replace(",", ".")) * 100))
+    resp = api_post(CRYPTO_URL, "/invoices", json={
+        "amount_cents": amount_cents,
+        "asset": request.form.get("asset", "USDT"),
+        "merchant_account": request.form["merchant_account_id"],
+    })
+    if resp.status_code >= 400:
+        flash(f"Erro ao gerar cobrança cripto: {resp.text}", "error")
+        return redirect(url_for("crypto_new_form"))
+    invoice = resp.json()
+    return render_template("crypto_invoice.html", invoice=invoice)
+
+
+@app.post("/crypto/<transaction_id>/simulate")
+@require_auth
+def crypto_simulate(transaction_id):
+    resp = api_post(CRYPTO_URL, "/_sandbox/simulate-confirmation", json={"transaction_id": transaction_id})
+    if resp.status_code >= 400:
+        flash(f"Erro ao simular confirmação: {resp.text}", "error")
+    else:
+        flash("Confirmação cripto simulada com sucesso (modo sandbox).", "success")
+    return redirect(url_for("dashboard"))
+
+
 @app.get("/settings/providers")
 @require_auth
 def providers_form():

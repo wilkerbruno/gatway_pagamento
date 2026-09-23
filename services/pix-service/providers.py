@@ -125,6 +125,27 @@ class PagarmePixProvider(PixProvider):
         return {"provider_ref": charge.get("id"), "status": status}
 
 
+class SandboxPixProvider(PixProvider):
+    """Simula um PIX de ponta a ponta sem chamar nenhuma API externa — nao
+    precisa de token/chave de ninguem. E o jeito de testar o fluxo completo
+    (cobranca -> pagamento -> liquidacao) antes de configurar Mercado Pago
+    ou Pagar.me de verdade. O "pagamento" so acontece quando voce chama
+    POST /_sandbox/simulate-payment (o botao "Simular pagamento" no painel)."""
+
+    def create_charge(self, amount_cents, external_reference, payer_email=None):
+        fake_payload = f"00020126580014br.gov.bcb.pix0136SANDBOX{external_reference}5204000053039865802BR"
+        return {
+            "provider_ref": external_reference,
+            "qr_code_payload": fake_payload,
+            "qr_code_base64": None,
+        }
+
+    def parse_webhook(self, payload, headers):
+        # sandbox nao recebe webhook de ninguem — a confirmacao vem so pelo
+        # endpoint /_sandbox/simulate-payment
+        return {"provider_ref": payload.get("provider_ref"), "status": "pending"}
+
+
 class DirectPixProvider(PixProvider):
     """Integração direta com o SPI/DICT do Banco Central. Só funciona depois
     que a empresa virar Participante do PIX autorizado — ver docs/COMPLIANCE.md.
@@ -144,6 +165,7 @@ class DirectPixProvider(PixProvider):
 
 def get_provider(name: str) -> PixProvider:
     providers = {
+        "sandbox": SandboxPixProvider,
         "mercadopago": MercadoPagoPixProvider,
         "pagarme": PagarmePixProvider,
         "direct": DirectPixProvider,

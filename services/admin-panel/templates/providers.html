@@ -6,7 +6,7 @@
   <form class="card" method="post" action="{{ url_for('providers_submit', rail=p.rail) }}">
     <label>{{ p.rail|upper }}</label>
     <select name="provider">
-      {% for opt in ['mercadopago', 'pagarme', 'direct'] %}
+      {% for opt in ['sandbox', 'mercadopago', 'pagarme', 'direct'] %}
       <option value="{{ opt }}" {% if opt == p.provider %}selected{% endif %}>{{ opt }}</option>
       {% endfor %}
     </select>

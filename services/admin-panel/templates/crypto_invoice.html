@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Cobrança cripto gerada{% endblock %}
+{% block content %}
+  <h1>Cobrança cripto gerada</h1>
+  <div class="card">
+    <p>Ativo: <strong>{{ invoice.asset }}</strong> ({{ invoice.chain }})</p>
+    <p>Valor esperado: <strong>{{ invoice.required_amount_base_units }} {{ invoice.asset }}</strong></p>
+    <p class="mono" style="word-break: break-all;">endereço: {{ invoice.address }}</p>
+    <p class="mono">invoice: {{ invoice.id }}</p>
+    <p>Status: {{ invoice.status }}</p>
+    <p style="color:#9aa4b2; font-size: 13px;">
+      Em produção, esse endereço é observado direto na blockchain (via RPC) —
+      quando o valor chegar, liquida sozinho. Aqui no sandbox, sem mandar
+      cripto de verdade, use o botão abaixo pra simular a confirmação.
+    </p>
+    <form method="post" action="{{ url_for('crypto_simulate', transaction_id=invoice.transaction_id) }}">
+      <button class="btn secondary" type="submit">Simular confirmação (sandbox)</button>
+    </form>
+  </div>
+{% endblock %}

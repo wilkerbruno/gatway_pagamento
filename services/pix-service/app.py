@@ -29,7 +29,7 @@ def active_provider_name() -> str:
         resp = requests.get(f"{LEDGER_URL}/admin/settings/providers", timeout=5)
         resp.raise_for_status()
         settings = {row["rail"]: row["provider"] for row in resp.json()}
-        _settings_cache["provider"] = settings.get("pix", "mercadopago")
+        _settings_cache["provider"] = settings.get("pix", "sandbox")
         _settings_cache["fetched_at"] = now
     return _settings_cache["provider"]
 

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Gerar cobrança cripto{% endblock %}
+{% block content %}
+  <h1>Gerar cobrança em cripto (sem provedor terceiro)</h1>
+  <form class="card" method="post" action="{{ url_for('crypto_new_submit') }}">
+    <label>Lojista/carteira que recebe</label>
+    <select name="merchant_account_id" required>
+      {% for c in customers %}
+      <option value="{{ c.account.id }}">{{ c.name }}</option>
+      {% endfor %}
+    </select>
+    <label>Ativo</label>
+    <select name="asset">
+      <option value="USDT">USDT (Polygon)</option>
+      <option value="MATIC">MATIC (Polygon)</option>
+    </select>
+    <label>Valor (R$)</label>
+    <input type="text" name="amount_brl" placeholder="10,00" required>
+    <br><br>
+    <button class="btn" type="submit">Gerar endereço de cobrança</button>
+  </form>
+{% endblock %}

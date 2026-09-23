@@ -152,8 +152,8 @@ def get_transaction(transaction_id):
 from .models import ProviderSetting
 
 VALID_PROVIDERS = {
-    "pix": {"mercadopago", "pagarme", "direct"},
-    "card": {"mercadopago", "pagarme", "direct"},
+    "pix": {"sandbox", "mercadopago", "pagarme", "direct"},
+    "card": {"sandbox", "mercadopago", "pagarme", "direct"},
 }
 
 
@@ -163,7 +163,7 @@ def list_provider_settings():
     configured = {r.rail: r.to_dict() for r in rows}
     # trilhos ainda não configurados caem no default "mercadopago"
     for rail in VALID_PROVIDERS:
-        configured.setdefault(rail, {"rail": rail, "provider": "mercadopago"})
+        configured.setdefault(rail, {"rail": rail, "provider": "sandbox"})
     return jsonify(list(configured.values()))
 
 
