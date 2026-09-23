@@ -1,6 +1,64 @@
 import os
 from flask import Flask
+from sqlalchemy import inspect, text
 from .models import db
+
+
+def _run_auto_migrations(app):
+    """Lightweight schema-drift fixer.
+
+    db.create_all() only creates tables that don't exist yet -- it never
+    alters a table that's already live in the database. When we add a new
+    column to an existing model (e.g. Customer.password_hash), a
+    previously-deployed database won't have it and every query against
+    that model blows up with a 500 ("Unknown column ..."). This walks
+    every model's columns, compares them against what's actually in the
+    database, and issues a plain ADD COLUMN for anything missing.
+
+    Intentionally conservative: only adds columns, never drops or alters
+    existing ones, and skips anything it can't handle safely.
+    """
+    inspector = inspect(db.engine)
+    existing_tables = set(inspector.get_table_names())
+
+    with db.engine.begin() as conn:
+        for table in db.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                # Brand new table -- db.create_all() already handled it.
+                continue
+
+            existing_columns = {
+                col["name"] for col in inspector.get_columns(table.name)
+            }
+
+            for column in table.columns:
+                if column.name in existing_columns:
+                    continue
+                try:
+                    col_type = column.type.compile(dialect=db.engine.dialect)
+                except Exception:
+                    app.logger.warning(
+                        "auto-migration: skipping %s.%s (unsupported type for compile)",
+                        table.name, column.name,
+                    )
+                    continue
+
+                # A new column on a live table can't be NOT NULL without a
+                # default (existing rows would violate it), so relax to
+                # nullable unless the column itself defines a default.
+                nullable_sql = ""
+                if not column.nullable and (column.default is not None or column.server_default is not None):
+                    nullable_sql = " NOT NULL"
+
+                ddl = f"ALTER TABLE {table.name} ADD COLUMN {column.name} {col_type}{nullable_sql}"
+                app.logger.info("auto-migration: %s", ddl)
+                try:
+                    conn.execute(text(ddl))
+                except Exception as exc:
+                    app.logger.error(
+                        "auto-migration: failed to add %s.%s: %s",
+                        table.name, column.name, exc,
+                    )
 
 
 def create_app():
@@ -17,5 +75,9 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        try:
+            _run_auto_migrations(app)
+        except Exception:
+            app.logger.exception("auto-migration step failed; continuing boot")
 
     return app
