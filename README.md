@@ -39,7 +39,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Isso sobe os 4 serviços + Postgres + Redis, todos em modo "sandbox" (sem credenciais
+Isso sobe os 4 serviços + MySQL + Redis, todos em modo "sandbox" (sem credenciais
 reais de nenhuma rede de pagamento).
 
 ## Próximos passos

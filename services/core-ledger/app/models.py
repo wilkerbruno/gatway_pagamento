@@ -6,6 +6,12 @@ from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
 
+# UUIDs (gen_uuid) sempre têm 36 caracteres — usado em todo primary/foreign key
+# de string abaixo. MySQL exige tamanho explícito em VARCHAR (Postgres/SQLite
+# não exigem, mas aceitam do mesmo jeito), por isso todo db.String() aqui tem
+# um tamanho definido.
+UUID_LEN = 36
+
 
 def gen_uuid():
     return str(uuid.uuid4())
@@ -28,9 +34,9 @@ class Account(db.Model):
 
     __tablename__ = "accounts"
 
-    id = db.Column(db.String, primary_key=True, default=gen_uuid)
-    owner_ref = db.Column(db.String, nullable=False, index=True)  # id externo do dono
-    kind = db.Column(db.String, nullable=False)  # merchant | customer | system
+    id = db.Column(db.String(UUID_LEN), primary_key=True, default=gen_uuid)
+    owner_ref = db.Column(db.String(255), nullable=False, index=True)  # id externo do dono
+    kind = db.Column(db.String(20), nullable=False)  # merchant | customer | system
     currency = db.Column(db.String(8), nullable=False, default="BRL")
     balance_cents = db.Column(db.BigInteger, nullable=False, default=0)
     # contas de sistema podem ficar negativas (representam dinheiro "a receber"
@@ -56,10 +62,10 @@ class Transaction(db.Model):
 
     __tablename__ = "transactions"
 
-    id = db.Column(db.String, primary_key=True, default=gen_uuid)
-    idempotency_key = db.Column(db.String, unique=True, nullable=False, index=True)
-    rail = db.Column(db.String, nullable=False)  # pix | card | crypto
-    external_ref = db.Column(db.String, nullable=True)  # txid do PSP, etc.
+    id = db.Column(db.String(UUID_LEN), primary_key=True, default=gen_uuid)
+    idempotency_key = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    rail = db.Column(db.String(30), nullable=False)  # pix | card | crypto | internal_transfer
+    external_ref = db.Column(db.String(255), nullable=True)  # txid do PSP, etc.
     status = db.Column(db.Enum(EntryStatus), default=EntryStatus.PENDING, nullable=False)
     metadata_json = db.Column(db.JSON, nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
@@ -82,9 +88,9 @@ class Transaction(db.Model):
 class LedgerEntry(db.Model):
     __tablename__ = "ledger_entries"
 
-    id = db.Column(db.String, primary_key=True, default=gen_uuid)
-    transaction_id = db.Column(db.String, db.ForeignKey("transactions.id"), nullable=False)
-    account_id = db.Column(db.String, db.ForeignKey("accounts.id"), nullable=False)
+    id = db.Column(db.String(UUID_LEN), primary_key=True, default=gen_uuid)
+    transaction_id = db.Column(db.String(UUID_LEN), db.ForeignKey("transactions.id"), nullable=False)
+    account_id = db.Column(db.String(UUID_LEN), db.ForeignKey("accounts.id"), nullable=False)
     amount_cents = db.Column(db.BigInteger, nullable=False)  # positivo=crédito, negativo=débito
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
@@ -101,9 +107,9 @@ class WebhookEvent(db.Model):
 
     __tablename__ = "webhook_events"
 
-    id = db.Column(db.String, primary_key=True, default=gen_uuid)
-    transaction_id = db.Column(db.String, db.ForeignKey("transactions.id"), nullable=False)
-    event_type = db.Column(db.String, nullable=False)
+    id = db.Column(db.String(UUID_LEN), primary_key=True, default=gen_uuid)
+    transaction_id = db.Column(db.String(UUID_LEN), db.ForeignKey("transactions.id"), nullable=False)
+    event_type = db.Column(db.String(50), nullable=False)
     delivered = db.Column(db.Boolean, default=False)
     attempts = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
@@ -115,8 +121,8 @@ class ProviderSetting(db.Model):
 
     __tablename__ = "provider_settings"
 
-    rail = db.Column(db.String, primary_key=True)  # "pix" | "card"
-    provider = db.Column(db.String, nullable=False)  # "mercadopago" | "pagarme" | "direct"
+    rail = db.Column(db.String(20), primary_key=True)  # "pix" | "card"
+    provider = db.Column(db.String(20), nullable=False)  # "mercadopago" | "pagarme" | "direct"
     updated_at = db.Column(db.DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     def to_dict(self):
@@ -129,11 +135,11 @@ class Customer(db.Model):
 
     __tablename__ = "customers"
 
-    id = db.Column(db.String, primary_key=True, default=gen_uuid)
-    account_id = db.Column(db.String, db.ForeignKey("accounts.id"), nullable=False, unique=True)
-    name = db.Column(db.String, nullable=False)
-    document = db.Column(db.String, nullable=True)  # CPF/CNPJ
-    email = db.Column(db.String, nullable=True)
+    id = db.Column(db.String(UUID_LEN), primary_key=True, default=gen_uuid)
+    account_id = db.Column(db.String(UUID_LEN), db.ForeignKey("accounts.id"), nullable=False, unique=True)
+    name = db.Column(db.String(255), nullable=False)
+    document = db.Column(db.String(32), nullable=True)  # CPF/CNPJ
+    email = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
     account = db.relationship("Account")
