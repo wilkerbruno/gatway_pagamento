@@ -10,6 +10,7 @@
     internas entre carteiras.
   </p>
   <form class="card" method="post" action="{{ url_for('platform_settings_submit') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Conta que recebe a taxa</label>
     <select name="platform_account_id" required>
       <option value="">— selecione —</option>

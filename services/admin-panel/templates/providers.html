@@ -4,6 +4,7 @@
   <h1>Provedor ativo por trilho</h1>
   {% for p in providers %}
   <form class="card" method="post" action="{{ url_for('providers_submit', rail=p.rail) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>{{ p.rail|upper }}</label>
     <select name="provider">
       {% for opt in ['sandbox', 'mercadopago', 'pagarme', 'direct'] %}

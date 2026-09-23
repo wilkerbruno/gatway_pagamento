@@ -159,6 +159,76 @@ class Customer(db.Model):
         }
 
 
+class WithdrawalRequest(db.Model):
+    """Pedido de saque: o cliente pede pra tirar dinheiro da carteira Divisions
+    Pay e mandar pra uma chave PIX externa (outro banco). O valor sai do saldo
+    do cliente NA HORA que o pedido é criado (fica reservado numa conta de
+    sistema 'payouts_pending', pra não gastar duas vezes o mesmo saldo
+    enquanto o saque está pendente) — mas o envio de verdade pra fora da
+    Divisions Pay é feito manualmente pelo admin, pela conta real do Mercado
+    Pago da empresa, até a API de transferência/saque deles ser aprovada pra
+    automatizar. Isso é intencional: mover dinheiro pra outro banco por uma
+    rede regulada (SPI/PIX) exige ser participante autorizado ou passar por
+    quem já é (ver docs/COMPLIANCE.md) — o software não finge que pode pular
+    essa etapa."""
+
+    __tablename__ = "withdrawal_requests"
+
+    id = db.Column(db.String(UUID_LEN), primary_key=True, default=gen_uuid)
+    customer_id = db.Column(db.String(UUID_LEN), db.ForeignKey("customers.id"), nullable=False)
+    account_id = db.Column(db.String(UUID_LEN), db.ForeignKey("accounts.id"), nullable=False)
+    amount_cents = db.Column(db.BigInteger, nullable=False)
+    pix_key = db.Column(db.String(255), nullable=False)
+    pix_key_type = db.Column(db.String(20), nullable=False)  # cpf | cnpj | email | phone | random
+    status = db.Column(db.String(20), nullable=False, default="pending")  # pending | paid | failed | canceled
+    transaction_id = db.Column(db.String(UUID_LEN), db.ForeignKey("transactions.id"), nullable=True)
+    reversal_transaction_id = db.Column(db.String(UUID_LEN), db.ForeignKey("transactions.id"), nullable=True)
+    admin_note = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+    resolved_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "customer_id": self.customer_id,
+            "account_id": self.account_id,
+            "amount_cents": self.amount_cents,
+            "pix_key": self.pix_key,
+            "pix_key_type": self.pix_key_type,
+            "status": self.status,
+            "transaction_id": self.transaction_id,
+            "admin_note": self.admin_note,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
+        }
+
+
+class AuditLog(db.Model):
+    """Trilha de auditoria de eventos sensíveis (login, criação de cliente,
+    troca de senha, transferência, saque). Não é uma feature 'bonita', é
+    segurança básica: se algo der errado ou for contestado, dá pra
+    reconstruir o que aconteceu, quando e a partir de que IP."""
+
+    __tablename__ = "audit_logs"
+
+    id = db.Column(db.String(UUID_LEN), primary_key=True, default=gen_uuid)
+    event_type = db.Column(db.String(50), nullable=False, index=True)
+    actor = db.Column(db.String(255), nullable=True)  # customer_id, "admin", etc.
+    ip_address = db.Column(db.String(64), nullable=True)
+    detail_json = db.Column(db.JSON, nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow, index=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "event_type": self.event_type,
+            "actor": self.actor,
+            "ip_address": self.ip_address,
+            "detail": self.detail_json,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
 class PlatformSetting(db.Model):
     """Configuração chave/valor simples da plataforma: qual conta recebe a
     taxa de 1% (platform_account_id) e o percentual em si (fee_bps, em

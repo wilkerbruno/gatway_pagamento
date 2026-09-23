@@ -3,6 +3,7 @@
 {% block content %}
   <h1>Novo cliente</h1>
   <form class="card" method="post" action="{{ url_for('new_customer_submit') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Nome</label>
     <input type="text" name="name" required>
     <label>CPF/CNPJ</label>

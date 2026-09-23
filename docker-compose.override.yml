@@ -24,6 +24,12 @@ services:
   admin-panel:
     ports:
       - "8000:8000"
+    environment:
+      # localhost é http puro -- sem isso, o cookie de sessão marcado como
+      # "Secure" nunca voltaria e o login pareceria não funcionar.
+      FORCE_HTTPS_COOKIES: "false"
   customer-portal:
     ports:
       - "8006:8006"
+    environment:
+      FORCE_HTTPS_COOKIES: "false"

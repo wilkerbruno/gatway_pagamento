@@ -8,6 +8,9 @@ core-ledger: GET/PUT /admin/settings/providers/pix) sem precisar de redeploy.
   do PIX (ver docs/COMPLIANCE.md). Hoje ela existe só para o código já ter o
   "encaixe" certo; chamar cria um erro claro em vez de fingir que funciona.
 """
+import hmac
+import hashlib
+import json
 import os
 import uuid
 from abc import ABC, abstractmethod
@@ -21,8 +24,14 @@ class PixProvider(ABC):
         """Deve retornar {"provider_ref": str, "qr_code_payload": str, "qr_code_base64": str|None}"""
 
     @abstractmethod
-    def parse_webhook(self, payload: dict, headers: dict) -> dict:
-        """Deve retornar {"provider_ref": str, "status": "confirmed"|"pending"|"failed"}"""
+    def parse_webhook(self, payload: dict, headers: dict, query_params: dict | None = None) -> dict:
+        """Deve retornar {"provider_ref": str, "status": "confirmed"|"pending"|"failed", "verified": bool}.
+
+        "verified" é o campo que importa pra segurança: diz se a origem do
+        webhook foi de fato confirmada (assinatura válida) antes de confiar
+        no conteúdo. Qualquer coisa que mexa com dinheiro de verdade deve
+        checar esse campo e recusar (nunca liquidar) um webhook não
+        verificado — ver app.py."""
 
 
 class MercadoPagoPixProvider(PixProvider):
@@ -30,6 +39,13 @@ class MercadoPagoPixProvider(PixProvider):
 
     def __init__(self):
         self.access_token = os.environ["MERCADOPAGO_ACCESS_TOKEN"]
+        # Chave secreta de assinatura do webhook (Mercado Pago > sua aplicação
+        # > Webhooks > "Assinatura secreta"). Sem ela, não tem como confirmar
+        # que uma notificação veio mesmo do Mercado Pago — qualquer um
+        # poderia forjar um POST dizendo "pagamento aprovado" e ganhar
+        # crédito de graça. Por isso, sem essa variável configurada, todo
+        # webhook é tratado como NÃO verificado (nunca liquida sozinho).
+        self.webhook_secret = os.environ.get("MERCADOPAGO_WEBHOOK_SECRET")
 
     def create_charge(self, amount_cents, external_reference, payer_email=None):
         amount = f"{amount_cents / 100:.2f}"
@@ -65,16 +81,61 @@ class MercadoPagoPixProvider(PixProvider):
             "qr_code_base64": pm.get("qr_code_base64"),
         }
 
-    def parse_webhook(self, payload, headers):
-        # Mercado Pago manda notificações do tipo {"type": "payment", "data": {"id": ...}}.
-        # Em produção: com o id, consulte GET /v1/orders/{id} para confirmar o status
-        # (nunca confie cegamente no corpo do webhook) e valide a assinatura
-        # (header x-signature) antes de processar.
-        status_map = {"approved": "confirmed", "rejected": "failed"}
-        status = payload.get("status", "pending")
+    def _verify_signature(self, headers, query_params) -> bool:
+        """Esquema de assinatura do Mercado Pago: header 'x-signature' no
+        formato 'ts=<epoch>,v1=<hmac_sha256_hex>', calculado sobre o
+        manifesto 'id:<data.id>;request-id:<x-request-id>;ts:<ts>;' usando a
+        assinatura secreta como chave. Confira contra a documentação atual
+        do Mercado Pago antes de operar com volume real — esse é o esquema
+        deles no momento em que este código foi escrito."""
+        if not self.webhook_secret:
+            return False
+
+        signature_header = headers.get("x-signature") or headers.get("X-Signature")
+        request_id = headers.get("x-request-id") or headers.get("X-Request-Id")
+        data_id = (query_params or {}).get("data.id") or (query_params or {}).get("id")
+        if not signature_header or not data_id:
+            return False
+
+        parts = dict(p.split("=", 1) for p in signature_header.split(",") if "=" in p)
+        ts, v1 = parts.get("ts"), parts.get("v1")
+        if not ts or not v1:
+            return False
+
+        manifest = f"id:{str(data_id).lower()};request-id:{request_id or ''};ts:{ts};"
+        computed = hmac.new(self.webhook_secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(computed, v1)
+
+    def parse_webhook(self, payload, headers, query_params=None):
+        verified = self._verify_signature(headers, query_params)
+        if not verified:
+            # Não confiamos numa notificação que não conseguimos autenticar.
+            # Devolve "pending": o pagamento só será liquidado quando algo
+            # confiável confirmar (ex: você reconciliar manualmente, ou a
+            # assinatura ficar configurada corretamente).
+            return {"provider_ref": None, "status": "pending", "verified": False}
+
+        # Nunca confia no campo "status" do corpo do webhook em si — ele é
+        # só um aviso de "algo mudou". Reconsulta a API do Mercado Pago pra
+        # pegar o status real e autoritativo antes de liquidar qualquer coisa.
+        order_id = payload.get("data", {}).get("id") or payload.get("id")
+        if not order_id:
+            return {"provider_ref": None, "status": "pending", "verified": True}
+
+        resp = requests.get(
+            f"{self.BASE_URL}/{order_id}",
+            headers={"Authorization": f"Bearer {self.access_token}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        payments = data.get("transactions", {}).get("payments", [{}])
+        raw_status = (payments[0].get("status") if payments else None) or data.get("status", "pending")
+        status_map = {"approved": "confirmed", "processed": "confirmed", "rejected": "failed", "cancelled": "failed"}
         return {
-            "provider_ref": payload.get("id") or payload.get("data", {}).get("id"),
-            "status": status_map.get(status, "pending"),
+            "provider_ref": data.get("id"),
+            "status": status_map.get(raw_status, "pending"),
+            "verified": True,
         }
 
 
@@ -83,6 +144,9 @@ class PagarmePixProvider(PixProvider):
 
     def __init__(self):
         self.secret_key = os.environ["PAGARME_SECRET_KEY"]
+        # Configurada no painel da Pagar.me, na tela de webhooks. Sem ela,
+        # nenhum webhook é confiado (mesmo raciocínio do Mercado Pago acima).
+        self.webhook_secret = os.environ.get("PAGARME_WEBHOOK_SECRET")
 
     def create_charge(self, amount_cents, external_reference, payer_email=None):
         resp = requests.post(
@@ -114,15 +178,33 @@ class PagarmePixProvider(PixProvider):
             "qr_code_base64": tx.get("qr_code_url"),
         }
 
-    def parse_webhook(self, payload, headers):
+    def parse_webhook(self, payload, headers, query_params=None):
         # Pagar.me manda {"type": "order.paid" | "charge.paid" | ..., "data": {...}}.
-        # Em produção: valide a assinatura (header configurado no painel) antes de processar.
+        # A verificação abaixo é um HMAC simples sobre o corpo cru — confira
+        # o esquema exato (nome do header, algoritmo) na documentação atual
+        # da Pagar.me antes de operar com volume real; até lá, sem a env var
+        # configurada, todo webhook fica "não verificado" por padrão.
+        if not self.webhook_secret:
+            return {"provider_ref": None, "status": "pending", "verified": False}
+
+        signature = headers.get("x-hub-signature") or headers.get("X-Hub-Signature")
+        if not signature:
+            return {"provider_ref": None, "status": "pending", "verified": False}
+
+        computed = hmac.new(
+            self.webhook_secret.encode(),
+            json.dumps(payload, separators=(",", ":")).encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(computed, signature.replace("sha256=", "")):
+            return {"provider_ref": None, "status": "pending", "verified": False}
+
         event_type = payload.get("type", "")
         status = "confirmed" if event_type.endswith(".paid") else "pending"
         if event_type.endswith((".failed", ".refused")):
             status = "failed"
         charge = payload.get("data", {})
-        return {"provider_ref": charge.get("id"), "status": status}
+        return {"provider_ref": charge.get("id"), "status": status, "verified": True}
 
 
 class SandboxPixProvider(PixProvider):
@@ -140,10 +222,11 @@ class SandboxPixProvider(PixProvider):
             "qr_code_base64": None,
         }
 
-    def parse_webhook(self, payload, headers):
+    def parse_webhook(self, payload, headers, query_params=None):
         # sandbox nao recebe webhook de ninguem — a confirmacao vem so pelo
-        # endpoint /_sandbox/simulate-payment
-        return {"provider_ref": payload.get("provider_ref"), "status": "pending"}
+        # endpoint /_sandbox/simulate-payment (chamado direto pelo admin-panel,
+        # já autenticado, então não há um webhook externo pra verificar aqui)
+        return {"provider_ref": payload.get("provider_ref"), "status": "pending", "verified": True}
 
 
 class DirectPixProvider(PixProvider):
@@ -159,7 +242,7 @@ class DirectPixProvider(PixProvider):
             "Até lá, use provider=mercadopago ou provider=pagarme."
         )
 
-    def parse_webhook(self, payload, headers):
+    def parse_webhook(self, payload, headers, query_params=None):
         raise NotImplementedError("Ver create_charge().")
 
 

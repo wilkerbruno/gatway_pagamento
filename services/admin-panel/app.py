@@ -3,15 +3,31 @@
 Protegido por HTTP Basic Auth (ADMIN_USER / ADMIN_PASSWORD via env). Fala com
 core-ledger e pix-service pelos endereços internos — nunca expõe as APIs de
 pagamento diretamente pro navegador, só este painel.
+
+Segurança: cabeçalhos padrão, CSRF em todo POST, e um limite (best-effort,
+em memória) de tentativas de login erradas por IP — o admin-panel usa um
+único login compartilhado (Basic Auth), então o travamento é por IP, não
+por usuário; reinicia se o serviço reiniciar, o que é aceitável pra essa
+camada (a auditoria e o travamento por conta de cliente, que importam mais,
+já estão no core-ledger).
 """
 import os
+import secrets
+import time
+from collections import defaultdict
 from functools import wraps
 
 import requests
-from flask import Flask, render_template, request, redirect, url_for, flash, Response
+from flask import Flask, render_template, request, redirect, url_for, flash, session, Response, abort
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("ADMIN_PANEL_SECRET", "troque-isto-em-producao")
+
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=os.environ.get("FORCE_HTTPS_COOKIES", "true").lower() != "false",
+    SESSION_COOKIE_SAMESITE="Lax",
+)
 
 LEDGER_URL = os.environ.get("LEDGER_URL", "http://core-ledger:8001")
 PIX_URL = os.environ.get("PIX_URL", "http://pix-service:8002")
@@ -21,12 +37,31 @@ CRYPTO_URL = os.environ.get("CRYPTO_URL", "http://crypto-service:8004")
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
 
+LOGIN_LOCKOUT_MAX_ATTEMPTS = 10
+LOGIN_LOCKOUT_WINDOW_SECONDS = 15 * 60
+_failed_attempts = defaultdict(list)  # ip -> [timestamps]
+
+
+def _client_ip():
+    return request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+
+
+def _is_locked_out(ip):
+    now = time.time()
+    _failed_attempts[ip] = [t for t in _failed_attempts[ip] if now - t < LOGIN_LOCKOUT_WINDOW_SECONDS]
+    return len(_failed_attempts[ip]) >= LOGIN_LOCKOUT_MAX_ATTEMPTS
+
 
 def require_auth(f):
     @wraps(f)
     def wrapped(*args, **kwargs):
+        ip = _client_ip()
+        if _is_locked_out(ip):
+            return Response("Muitas tentativas de login erradas. Tente de novo mais tarde.", 429)
+
         auth = request.authorization
         if not auth or auth.username != ADMIN_USER or auth.password != ADMIN_PASSWORD:
+            _failed_attempts[ip].append(time.time())
             return Response(
                 "Autenticação necessária", 401,
                 {"WWW-Authenticate": 'Basic realm="Admin do Gateway"'},
@@ -67,6 +102,45 @@ def error_message(resp):
     return text[:300]
 
 
+# --- Segurança: cabeçalhos padrão e CSRF ------------------------------------
+
+@app.after_request
+def set_security_headers(resp):
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "same-origin"
+    resp.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    resp.headers["Content-Security-Policy"] = (
+        "default-src 'self'; style-src 'self' 'unsafe-inline' fonts.googleapis.com; "
+        "font-src fonts.gstatic.com; img-src 'self' data:; script-src 'self'"
+    )
+    return resp
+
+
+def _csrf_token():
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+    return session["csrf_token"]
+
+
+app.jinja_env.globals["csrf_token"] = _csrf_token
+
+
+@app.before_request
+def _check_csrf():
+    if request.method == "POST":
+        sent = request.form.get("csrf_token", "")
+        expected = session.get("csrf_token", "")
+        if not sent or not expected or not secrets.compare_digest(sent, expected):
+            abort(400, description="Falha de validação do formulário (CSRF). Recarregue a página e tente de novo.")
+
+
+@app.errorhandler(400)
+def bad_request(e):
+    flash(str(e.description) if hasattr(e, "description") else "Requisição inválida.", "error")
+    return redirect(request.referrer or url_for("dashboard")), 400
+
+
 @app.get("/health")
 def health():
     # sem auth — pra checagem de infra (EasyPanel, load balancer, etc.)
@@ -85,7 +159,11 @@ def dashboard():
         providers = {p["rail"]: p["provider"] for p in api_get(LEDGER_URL, "/admin/settings/providers")}
     except requests.RequestException:
         providers = {}
-    return render_template("dashboard.html", customers=customers, providers=providers)
+    try:
+        pending_withdrawals = len(api_get(LEDGER_URL, "/withdrawals?status=pending"))
+    except requests.RequestException:
+        pending_withdrawals = 0
+    return render_template("dashboard.html", customers=customers, providers=providers, pending_withdrawals=pending_withdrawals)
 
 
 @app.get("/customers/new")
@@ -272,6 +350,7 @@ def system_accounts():
         "pix_pending_account_id": "Pix (a receber do provedor)",
         "card_receivable_account_id": "Cartão (a receber do provedor)",
         "crypto_pending_account_id": "Cripto (a receber on-chain)",
+        "payouts_pending_account_id": "Saques (reservado pra sair)",
     }
     for key, label in labels.items():
         account_id = ids.get(key)
@@ -282,3 +361,44 @@ def system_accounts():
         accounts.append({"label": label, "id": account_id, "account": account})
 
     return render_template("system_accounts.html", accounts=accounts)
+
+
+@app.get("/saques")
+@require_auth
+def withdrawals_list():
+    """Fila de saques pedidos pelos clientes no portal deles. O admin manda
+    o PIX de verdade pela conta real da empresa (Mercado Pago produção) e
+    depois marca aqui como pago -- ou como falhou, se a chave estiver errada
+    (o valor volta pro cliente automaticamente)."""
+    status = request.args.get("status", "pending")
+    try:
+        params = {} if status == "all" else {"status": status}
+        withdrawals = api_get(LEDGER_URL, "/withdrawals", params=params)
+    except requests.RequestException as e:
+        flash(f"Não consegui falar com o core-ledger: {e}", "error")
+        withdrawals = []
+    return render_template("withdrawals.html", withdrawals=withdrawals, status=status)
+
+
+@app.post("/saques/<withdrawal_id>/pagar")
+@require_auth
+def withdrawal_mark_paid(withdrawal_id):
+    note = request.form.get("note", "")
+    resp = api_post(LEDGER_URL, f"/withdrawals/{withdrawal_id}/mark-paid", json={"note": note})
+    if resp.status_code >= 400:
+        flash(f"Erro ao marcar saque como pago: {error_message(resp)}", "error")
+    else:
+        flash("Saque marcado como pago.", "success")
+    return redirect(url_for("withdrawals_list"))
+
+
+@app.post("/saques/<withdrawal_id>/falhar")
+@require_auth
+def withdrawal_mark_failed(withdrawal_id):
+    note = request.form.get("note", "")
+    resp = api_post(LEDGER_URL, f"/withdrawals/{withdrawal_id}/mark-failed", json={"note": note})
+    if resp.status_code >= 400:
+        flash(f"Erro ao marcar saque como falho: {error_message(resp)}", "error")
+    else:
+        flash("Saque marcado como falho -- o valor voltou pro saldo do cliente.", "success")
+    return redirect(url_for("withdrawals_list"))

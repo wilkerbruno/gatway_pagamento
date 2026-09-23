@@ -30,7 +30,9 @@ services:
       SYSTEM_PIX_PENDING_ACCOUNT: ${SYSTEM_PIX_PENDING_ACCOUNT}
       DEFAULT_MERCHANT_ACCOUNT: ${DEFAULT_MERCHANT_ACCOUNT}
       MERCADOPAGO_ACCESS_TOKEN: ${MERCADOPAGO_ACCESS_TOKEN}
+      MERCADOPAGO_WEBHOOK_SECRET: ${MERCADOPAGO_WEBHOOK_SECRET}
       PAGARME_SECRET_KEY: ${PAGARME_SECRET_KEY}
+      PAGARME_WEBHOOK_SECRET: ${PAGARME_WEBHOOK_SECRET}
     depends_on:
       - core-ledger
 
@@ -70,6 +72,7 @@ services:
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
       ADMIN_PANEL_SECRET: ${ADMIN_PANEL_SECRET:-troque-isto}
+      FORCE_HTTPS_COOKIES: ${FORCE_HTTPS_COOKIES:-true}
     depends_on:
       - core-ledger
       - pix-service
@@ -80,6 +83,7 @@ services:
     environment:
       LEDGER_URL: http://core-ledger:8001
       CUSTOMER_PORTAL_SECRET: ${CUSTOMER_PORTAL_SECRET:-troque-isto}
+      FORCE_HTTPS_COOKIES: ${FORCE_HTTPS_COOKIES:-true}
     depends_on:
       - core-ledger
 

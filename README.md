@@ -186,3 +186,63 @@ pelo seu sistema, é descontada antes de você receber o valor líquido deles).
 Não incide em transferências internas (`/transfers`) — só nas cobranças que
 entram de fora pela primeira vez. Enquanto nenhuma conta estiver configurada,
 nenhuma taxa é cobrada (comportamento padrão, opt-in).
+
+## Saque pra outro banco (dinheiro saindo de verdade)
+
+O cliente pede o saque pelo próprio portal (**Sacar**, no menu de baixo):
+escolhe o tipo de chave PIX (CPF, CNPJ, e-mail, telefone ou aleatória),
+digita a chave de destino e o valor. Duas coisas acontecem:
+
+1. **Na hora**: o valor sai do saldo do cliente e fica reservado numa conta
+   de sistema (`payouts_pending`) — impede gastar o mesmo saldo duas vezes
+   enquanto o saque está pendente.
+2. **O envio de verdade** pra fora da Divisions Pay (pra outro banco, via
+   PIX) é feito manualmente por você, pela conta real da empresa no Mercado
+   Pago — veja **Saques** no admin-panel: lista os pedidos pendentes com a
+   chave PIX e o valor. Você manda o PIX de verdade pelo app/site do
+   Mercado Pago e depois clica **Marcar pago**. Se não der certo (chave
+   errada, etc.), clica **Marcar falho** e o valor volta sozinho pro saldo
+   do cliente.
+
+**Por que não é automático ainda:** mandar dinheiro pra fora por uma rede
+regulada (PIX/SPI) exige ser Participante do PIX autorizado pelo BACEN, ou
+usar a API de transferência/saque de quem já é (Mercado Pago, Pagar.me) —
+essa API costuma exigir aprovação extra da conta PJ, separada da API de
+cobrança. Assim que isso estiver liberado pra sua conta, dá pra automatizar
+o `mark-paid` chamando a API deles direto — a fila e a contabilidade já
+estão prontas pra isso, só falta plugar a chamada real no lugar do clique
+manual. Ver `docs/COMPLIANCE.md`.
+
+## Segurança
+
+- **Cookies de sessão**: `HttpOnly`, `Secure` (força HTTPS) e `SameSite=Lax`
+  no admin-panel e no customer-portal.
+- **CSRF**: todo formulário (login, transferência, saque, criar cliente,
+  trocar provedor, etc.) carrega um token de sessão verificado no servidor
+  antes de processar qualquer POST.
+- **Cabeçalhos de segurança**: `Content-Security-Policy`,
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+  `Strict-Transport-Security`, `Referrer-Policy`.
+- **Travamento de login**: 8 tentativas erradas seguidas pro mesmo
+  documento/e-mail no customer-portal travam por 15 minutos (registrado no
+  core-ledger, via auditoria — sobrevive a redeploy). O admin-panel trava
+  por IP depois de 10 tentativas (em memória — reinicia se o serviço
+  reiniciar).
+- **Senha**: mínimo 8 caracteres, com letra e número, tanto ao criar acesso
+  de cliente quanto ao trocar.
+- **Auditoria**: login (certo/errado), criação de cliente, troca de senha,
+  transferência e saque ficam registrados no core-ledger (`AuditLog`) com
+  IP e horário — útil se algo precisar ser investigado depois.
+- **Webhook do Mercado Pago/Pagar.me**: a confirmação de pagamento nunca
+  confia direto no que o webhook diz — o pix-service valida a assinatura
+  (`MERCADOPAGO_WEBHOOK_SECRET`/`PAGARME_WEBHOOK_SECRET`) e, quando válida,
+  reconsulta a API do provedor pra pegar o status real antes de liquidar
+  qualquer coisa. Sem a assinatura configurada, todo webhook é ignorado —
+  por padrão, ninguém consegue forjar um "pagamento aprovado" chamando sua
+  URL de webhook diretamente.
+- **Cartão**: o card-service nunca aceita número de cartão/CVV em claro, só
+  token gerado no front-end pelo SDK do provedor (fora do escopo PCI-DSS).
+
+O que ainda vale considerar antes de operar com volume alto: 2FA no login
+(TOTP), um WAF na frente do EasyPanel, rotação periódica das chaves/segredos,
+e uma revisão de segurança por terceiros antes de anunciar publicamente.

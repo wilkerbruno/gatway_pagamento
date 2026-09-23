@@ -3,6 +3,7 @@
 {% block content %}
   <h1>Transferência interna</h1>
   <form class="card" method="post" action="{{ url_for('transfer_submit') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>De</label>
     <select name="from_account_id" required>
       {% for c in customers %}

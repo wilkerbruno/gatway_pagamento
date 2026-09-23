@@ -3,6 +3,7 @@
 {% block content %}
   <h1>Gerar cobrança PIX (sandbox)</h1>
   <form class="card" method="post" action="{{ url_for('pix_new_submit') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Lojista/carteira que recebe</label>
     <select name="merchant_account_id" required>
       {% for c in customers %}

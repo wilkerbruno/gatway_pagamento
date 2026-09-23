@@ -9,6 +9,7 @@
 </div>
 
 <form method="post" action="{{ url_for('transfer_submit') }}" class="card">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <label>Para quem vai (CPF/CNPJ ou e-mail)</label>
   <input type="text" name="recipient" placeholder="000.000.000-00 ou destino@email.com" required autofocus>
 

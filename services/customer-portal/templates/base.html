@@ -8,16 +8,17 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg: #0d0f14;
-    --surface: #161922;
-    --surface-2: #1f2330;
-    --border: #2a2f3d;
-    --brand: #7c5cff;
-    --brand-2: #35d07f;
-    --text: #f4f5f8;
-    --text-dim: #9aa0b4;
+    /* Paleta Divisions Tech: preto, branco e o teal da marca. */
+    --bg: #0a0b0d;
+    --surface: #141618;
+    --surface-2: #1c1f22;
+    --border: #2a2e32;
+    --brand: #17c3a0;
+    --brand-dark: #0fa78a;
+    --text: #f5f7fa;
+    --text-dim: #9aa3ac;
     --danger: #ff5c72;
-    --success: #35d07f;
+    --success: #17c3a0;
     --radius: 18px;
     --radius-sm: 12px;
   }
@@ -54,10 +55,11 @@
     letter-spacing:-0.02em;
   }
   .brand-mark{
-    width:32px;height:32px;border-radius:9px;
-    background: linear-gradient(135deg, var(--brand), #5a3fe0);
+    width:34px;height:34px;border-radius:10px;
+    overflow:hidden;
     display:flex;align-items:center;justify-content:center;
-    font-size:16px;
+    background:#0a0b0d;
+    border:1px solid var(--border);
   }
   .avatar{
     width:36px;height:36px;border-radius:50%;
@@ -79,7 +81,7 @@
     font-weight: 500;
   }
   .flash-error{ background: rgba(255,92,114,0.12); color: var(--danger); border:1px solid rgba(255,92,114,0.3); }
-  .flash-success{ background: rgba(53,208,127,0.12); color: var(--success); border:1px solid rgba(53,208,127,0.3); }
+  .flash-success{ background: rgba(23,195,160,0.12); color: var(--success); border:1px solid rgba(23,195,160,0.3); }
 
   .card{
     background: var(--surface);
@@ -91,7 +93,7 @@
   .btn{
     display:inline-flex;align-items:center;justify-content:center;gap:8px;
     background: var(--brand);
-    color: #fff;
+    color: #04140f;
     border: none;
     border-radius: var(--radius-sm);
     padding: 14px 18px;
@@ -134,11 +136,11 @@
     left:0; right:0;
     max-width: 480px;
     margin: 0 auto;
-    background: rgba(22,25,34,0.92);
+    background: rgba(20,22,24,0.92);
     backdrop-filter: blur(12px);
     border-top: 1px solid var(--border);
     display:flex;
-    padding: 10px 8px calc(10px + env(safe-area-inset-bottom));
+    padding: 10px 4px calc(10px + env(safe-area-inset-bottom));
   }
   .nav-item{
     flex:1;
@@ -148,22 +150,28 @@
     gap:4px;
     text-decoration:none;
     color: var(--text-dim);
-    font-size: 11px;
+    font-size: 10.5px;
     font-weight: 600;
     padding: 6px 0;
     border-radius: 10px;
   }
-  .nav-item .nav-icon{ font-size: 20px; line-height:1; }
+  .nav-item .nav-icon{ font-size: 19px; line-height:1; }
   .nav-item.active{ color: var(--brand); }
 
-  ::selection{ background: var(--brand); color:#fff; }
+  ::selection{ background: var(--brand); color:#04140f; }
 </style>
 </head>
 <body>
 <div class="app-shell">
   <div class="topbar">
     <div class="brand">
-      <div class="brand-mark">💳</div>
+      <div class="brand-mark">
+        <svg width="34" height="34" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+          <rect x="10" y="8" width="7" height="15" rx="2" fill="#ffffff"/>
+          <rect x="10" y="27" width="13" height="5" rx="2" fill="#17c3a0"/>
+          <path d="M17 8 H21 A10 10 0 0 1 21 28 H17 V23 H21 A5 5 0 0 0 21 13 H17 Z" fill="#17c3a0"/>
+        </svg>
+      </div>
       Divisions Pay
     </div>
     {% if customer %}
@@ -189,7 +197,10 @@
       <span class="nav-icon">🏠</span>Início
     </a>
     <a href="{{ url_for('transfer_form') }}" class="nav-item {{ 'active' if active_tab == 'transfer' else '' }}">
-      <span class="nav-icon">↗️</span>Transferir
+      <span class="nav-icon">↗️</span>Enviar
+    </a>
+    <a href="{{ url_for('withdraw_form') }}" class="nav-item {{ 'active' if active_tab == 'withdraw' else '' }}">
+      <span class="nav-icon">🏦</span>Sacar
     </a>
     <a href="{{ url_for('extrato') }}" class="nav-item {{ 'active' if active_tab == 'extrato' else '' }}">
       <span class="nav-icon">🧾</span>Extrato

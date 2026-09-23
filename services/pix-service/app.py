@@ -99,7 +99,15 @@ def provider_webhook(provider_name):
     /webhook/pagarme), configurada no painel de cada um deles."""
     provider = get_provider(provider_name)
     payload = request.get_json(force=True)
-    result = provider.parse_webhook(payload, dict(request.headers))
+    result = provider.parse_webhook(payload, dict(request.headers), request.args)
+
+    if not result.get("verified", False) and provider_name != "sandbox":
+        # Webhook cuja origem não conseguimos autenticar (assinatura ausente/
+        # inválida, ou segredo não configurado). Nunca libera dinheiro com
+        # base nisso -- só ignora, silenciosamente do ponto de vista de quem
+        # tentou forjar a chamada, mas registrado nos logs do serviço.
+        app.logger.warning("webhook %s recebido sem verificação de assinatura -- ignorado", provider_name)
+        return jsonify({"ignored": True, "reason": "unverified"}), 200
 
     if result["status"] != "confirmed":
         return jsonify({"ignored": True, "status": result["status"]}), 200

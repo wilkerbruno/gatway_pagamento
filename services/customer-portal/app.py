@@ -4,27 +4,96 @@ Cada cliente loga com o próprio documento/e-mail + senha (definida pelo
 admin ao criar a conta, ou trocada depois via /customers/<id>/password no
 core-ledger) e só vê os dados da própria carteira — sessão isolada por
 cliente, nunca a lista de outros clientes. O cliente também pode transferir
-para outro cliente da plataforma diretamente por aqui (tipo PicPay), sem
-precisar passar pelo admin.
+para outro cliente da plataforma (tipo PicPay) e pedir saque pra uma chave
+PIX de outro banco, sem precisar passar pelo admin pra iniciar o pedido.
+
+Segurança: cookies de sessão com HttpOnly/Secure/SameSite, cabeçalhos de
+segurança padrão, proteção CSRF em todo POST, e o rate-limit de tentativas
+de login mora no core-ledger (compartilhado com o admin-panel se algum dia
+precisar), não duplicado aqui.
 """
 import os
+import secrets
 import uuid
 
 import requests
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, url_for, flash, session, abort
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("CUSTOMER_PORTAL_SECRET", "troque-isto-em-producao")
 
+# Cookie de sessão o mais travado possível: só HTTPS (EasyPanel termina TLS
+# na borda e repassa por HTTP interno — SESSION_COOKIE_SECURE ainda funciona
+# porque o navegador só manda o cookie de volta pra origem HTTPS mesmo),
+# inacessível a JavaScript (mitiga roubo de sessão via XSS) e nunca enviado
+# em navegação cross-site (mitiga CSRF, em conjunto com o token abaixo).
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=os.environ.get("FORCE_HTTPS_COOKIES", "true").lower() != "false",
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 2,  # 2h de sessão parada = desloga
+)
+
 LEDGER_URL = os.environ.get("LEDGER_URL", "http://core-ledger:8001")
 
 RAIL_LABELS = {
-    "pix": "Pix",
-    "card": "Cartão",
-    "crypto": "Cripto",
+    "pix": "Pix recebido",
+    "card": "Cartão recebido",
+    "crypto": "Cripto recebida",
     "internal_transfer": "Transferência",
+    "withdrawal_pix": "Saque",
+    "withdrawal_pix_reversal": "Estorno de saque",
 }
 
+PIX_KEY_TYPES = {
+    "cpf": "CPF",
+    "cnpj": "CNPJ",
+    "email": "E-mail",
+    "phone": "Telefone",
+    "random": "Chave aleatória",
+}
+
+
+# --- Segurança: cabeçalhos padrão e CSRF ------------------------------------
+
+@app.after_request
+def set_security_headers(resp):
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "same-origin"
+    resp.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    resp.headers["Content-Security-Policy"] = (
+        "default-src 'self'; style-src 'self' 'unsafe-inline' fonts.googleapis.com; "
+        "font-src fonts.gstatic.com; img-src 'self' data:; script-src 'self'"
+    )
+    return resp
+
+
+def _csrf_token():
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+    return session["csrf_token"]
+
+
+app.jinja_env.globals["csrf_token"] = _csrf_token
+
+
+@app.before_request
+def _check_csrf():
+    if request.method == "POST":
+        sent = request.form.get("csrf_token", "")
+        expected = session.get("csrf_token", "")
+        if not sent or not expected or not secrets.compare_digest(sent, expected):
+            abort(400, description="Falha de validação do formulário (CSRF). Recarregue a página e tente de novo.")
+
+
+@app.errorhandler(400)
+def bad_request(e):
+    flash(str(e.description) if hasattr(e, "description") else "Requisição inválida.", "error")
+    return redirect(request.referrer or url_for("login_form")), 400
+
+
+# --- Helpers -----------------------------------------------------------------
 
 def api_get(path, **kwargs):
     r = requests.get(f"{LEDGER_URL}{path}", timeout=10, **kwargs)
@@ -43,10 +112,7 @@ def current_customer():
 
 
 def require_login():
-    customer = current_customer()
-    if not customer:
-        return None
-    return customer
+    return current_customer()
 
 
 def enrich_entry(entry):
@@ -85,11 +151,16 @@ def login_submit():
         "login": request.form["login"],
         "password": request.form["password"],
     }, timeout=10)
+    if r.status_code == 429:
+        flash("Muitas tentativas erradas. Aguarde alguns minutos e tente de novo.", "error")
+        return redirect(url_for("login_form"))
     if r.status_code != 200:
         flash("Documento/e-mail ou senha incorretos.", "error")
         return redirect(url_for("login_form"))
     customer = r.json()
+    session.clear()
     session["customer_id"] = customer["id"]
+    session.permanent = True
     return redirect(url_for("dashboard"))
 
 
@@ -190,6 +261,63 @@ def transfer_submit():
 
     flash(f"Transferência enviada para {recipient['name']}!", "success")
     return redirect(url_for("dashboard"))
+
+
+@app.get("/sacar")
+def withdraw_form():
+    customer = require_login()
+    if not customer:
+        return redirect(url_for("login_form"))
+    withdrawals = api_get(f"/customers/{customer['id']}/withdrawals")
+    return render_template(
+        "withdraw.html",
+        customer=customer,
+        balance_display=format_currency(customer["account"]["balance_cents"]),
+        pix_key_types=PIX_KEY_TYPES,
+        withdrawals=withdrawals,
+    )
+
+
+@app.post("/sacar")
+def withdraw_submit():
+    customer = require_login()
+    if not customer:
+        return redirect(url_for("login_form"))
+
+    amount_reais = request.form.get("amount", "").replace(",", ".").strip()
+    pix_key = request.form.get("pix_key", "").strip()
+    pix_key_type = request.form.get("pix_key_type", "cpf")
+
+    try:
+        amount_cents = round(float(amount_reais) * 100)
+    except ValueError:
+        flash("Valor inválido.", "error")
+        return redirect(url_for("withdraw_form"))
+
+    if amount_cents <= 0:
+        flash("Informe um valor maior que zero.", "error")
+        return redirect(url_for("withdraw_form"))
+    if not pix_key:
+        flash("Informe a chave PIX de destino.", "error")
+        return redirect(url_for("withdraw_form"))
+
+    r = requests.post(f"{LEDGER_URL}/withdrawals", json={
+        "idempotency_key": str(uuid.uuid4()),
+        "customer_id": customer["id"],
+        "amount_cents": amount_cents,
+        "pix_key": pix_key,
+        "pix_key_type": pix_key_type,
+    }, timeout=10)
+
+    if r.status_code == 402:
+        flash("Saldo insuficiente para esse saque.", "error")
+        return redirect(url_for("withdraw_form"))
+    if r.status_code not in (200, 201):
+        flash("Não foi possível registrar o saque. Tente novamente.", "error")
+        return redirect(url_for("withdraw_form"))
+
+    flash("Saque solicitado! O valor já saiu do seu saldo e será enviado pra sua chave PIX em breve.", "success")
+    return redirect(url_for("withdraw_form"))
 
 
 @app.get("/perfil")

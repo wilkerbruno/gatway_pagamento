@@ -2,9 +2,26 @@ from flask import Blueprint, request, jsonify
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from .models import db, Account, Transaction, LedgerEntry, WebhookEvent, EntryStatus, PlatformSetting
+from .models import (
+    db, Account, Transaction, LedgerEntry, WebhookEvent, EntryStatus,
+    PlatformSetting, WithdrawalRequest, AuditLog, utcnow,
+)
 
 bp = Blueprint("ledger", __name__)
+
+
+def _log_audit(event_type: str, actor: str | None = None, detail: dict | None = None):
+    """Best-effort: um problema ao gravar auditoria nunca pode derrubar a
+    operação principal (login, transferência, etc.)."""
+    try:
+        db.session.add(AuditLog(
+            event_type=event_type,
+            actor=actor,
+            ip_address=request.headers.get("X-Forwarded-For", request.remote_addr),
+            detail_json=detail,
+        ))
+    except Exception:
+        pass
 
 
 @bp.get("/health")
@@ -63,6 +80,7 @@ def get_system_accounts():
         "pix_pending_account_id": _auto_get_or_create_system_account("system:pix_pending"),
         "card_receivable_account_id": _auto_get_or_create_system_account("system:card_receivable"),
         "crypto_pending_account_id": _auto_get_or_create_system_account("system:crypto_pending"),
+        "payouts_pending_account_id": _auto_get_or_create_system_account("system:payouts_pending"),
     })
 
 
@@ -319,6 +337,10 @@ def create_customer():
     db.session.flush()
 
     password = data.get("password")
+    if password:
+        weak = _password_weakness(password)
+        if weak:
+            return jsonify({"error": weak}), 400
     customer = Customer(
         account_id=acc.id,
         name=data["name"],
@@ -327,25 +349,63 @@ def create_customer():
         password_hash=generate_password_hash(password) if password else None,
     )
     db.session.add(customer)
+    _log_audit("customer.created", actor="admin", detail={"customer_name": customer.name, "has_login": bool(password)})
     db.session.commit()
     return jsonify(customer.to_dict()), 201
+
+
+def _password_weakness(password: str) -> str | None:
+    """Retorna uma mensagem de erro se a senha for fraca, ou None se estiver ok.
+    Regra simples e objetiva: 8+ caracteres, pelo menos uma letra e um número
+    — suficiente pra afastar senhas óbvias (123456, senha123) sem exigir
+    caracteres especiais que ninguém lembra."""
+    if len(password) < 8:
+        return "senha precisa ter pelo menos 8 caracteres"
+    if not any(c.isalpha() for c in password) or not any(c.isdigit() for c in password):
+        return "senha precisa ter letras e números"
+    return None
+
+
+LOGIN_LOCKOUT_MAX_ATTEMPTS = 8
+LOGIN_LOCKOUT_WINDOW_MINUTES = 15
 
 
 @bp.post("/customers/authenticate")
 def authenticate_customer():
     """Login do portal do cliente: verifica documento/e-mail + senha.
-    Retorna o cliente se bater, 401 caso contrario. Nao expoe password_hash."""
+    Retorna o cliente se bater, 401 caso contrario. Nao expoe password_hash.
+
+    Trava por 15 minutos depois de muitas tentativas erradas seguidas pro
+    mesmo login (força bruta de senha) — a contagem vem da própria trilha
+    de auditoria, sem precisar de tabela/cache separado."""
+    import datetime as _dt
+
     data = request.get_json(force=True)
-    login = data.get("login", "")
+    login = (data.get("login") or "").strip()
     password = data.get("password", "")
+
+    cutoff = utcnow() - _dt.timedelta(minutes=LOGIN_LOCKOUT_WINDOW_MINUTES)
+    recent_failures = AuditLog.query.filter(
+        AuditLog.event_type == "customer.login_failed",
+        AuditLog.actor == login,
+        AuditLog.created_at > cutoff,
+    ).count()
+    if recent_failures >= LOGIN_LOCKOUT_MAX_ATTEMPTS:
+        return jsonify({
+            "error": f"muitas tentativas erradas. Tente de novo em {LOGIN_LOCKOUT_WINDOW_MINUTES} minutos."
+        }), 429
 
     customer = Customer.query.filter(
         (Customer.document == login) | (Customer.email == login)
     ).first()
 
     if not customer or not customer.password_hash or not check_password_hash(customer.password_hash, password):
+        _log_audit("customer.login_failed", actor=login)
+        db.session.commit()
         return jsonify({"error": "credenciais invalidas"}), 401
 
+    _log_audit("customer.login_success", actor=customer.id)
+    db.session.commit()
     return jsonify(customer.to_dict())
 
 
@@ -356,9 +416,11 @@ def set_customer_password(customer_id):
     customer = Customer.query.get_or_404(customer_id)
     data = request.get_json(force=True)
     password = data.get("password")
-    if not password or len(password) < 6:
-        return jsonify({"error": "senha precisa ter pelo menos 6 caracteres"}), 400
+    weak = _password_weakness(password or "")
+    if weak:
+        return jsonify({"error": weak}), 400
     customer.password_hash = generate_password_hash(password)
+    _log_audit("customer.password_changed", actor=customer.id)
     db.session.commit()
     return jsonify(customer.to_dict())
 
@@ -481,6 +543,9 @@ def transfer():
     to_acc.balance_cents += amount_cents
     txn.status = EntryStatus.CONFIRMED
     db.session.add(WebhookEvent(transaction_id=txn.id, event_type="transfer.confirmed"))
+    _log_audit("transfer.confirmed", actor=from_acc.id, detail={
+        "to_account_id": to_acc.id, "amount_cents": amount_cents,
+    })
 
     try:
         db.session.commit()
@@ -490,3 +555,163 @@ def transfer():
         return jsonify(existing.to_dict()), 200
 
     return jsonify(txn.to_dict()), 201
+
+
+# --- Saques (saída de dinheiro real pra outro banco via chave PIX) -------
+#
+# O valor sai do saldo do cliente na hora que o pedido é criado (evita
+# gastar o mesmo saldo duas vezes enquanto o saque está pendente). O envio
+# de verdade pra fora da Divisions Pay é feito manualmente pelo admin, pela
+# conta real do Mercado Pago da empresa — ver WithdrawalRequest em models.py
+# pra entender por quê.
+
+@bp.post("/withdrawals")
+def create_withdrawal():
+    data = request.get_json(force=True)
+    customer_id = data["customer_id"]
+    amount_cents = data["amount_cents"]
+    pix_key = (data.get("pix_key") or "").strip()
+    pix_key_type = data.get("pix_key_type", "cpf")
+    idempotency_key = data["idempotency_key"]
+
+    if amount_cents <= 0:
+        return jsonify({"error": "amount_cents deve ser positivo"}), 400
+    if not pix_key:
+        return jsonify({"error": "informe a chave PIX de destino"}), 400
+
+    existing_txn = Transaction.query.filter_by(idempotency_key=idempotency_key).first()
+    if existing_txn:
+        existing_wr = WithdrawalRequest.query.filter_by(transaction_id=existing_txn.id).first()
+        return jsonify(existing_wr.to_dict()), 200
+
+    customer = Customer.query.get_or_404(customer_id)
+    from_acc = customer.account
+    payouts_pending_id = _auto_get_or_create_system_account("system:payouts_pending")
+    payouts_acc = Account.query.get(payouts_pending_id)
+
+    if from_acc.balance_cents < amount_cents:
+        return jsonify({
+            "error": "saldo insuficiente",
+            "balance_cents": from_acc.balance_cents,
+            "requested_cents": amount_cents,
+        }), 402
+
+    txn = Transaction(
+        idempotency_key=idempotency_key,
+        rail="withdrawal_pix",
+        status=EntryStatus.PENDING,
+        metadata_json={"pix_key": pix_key, "pix_key_type": pix_key_type},
+    )
+    db.session.add(txn)
+    db.session.flush()
+
+    db.session.add(LedgerEntry(transaction_id=txn.id, account_id=from_acc.id, amount_cents=-amount_cents))
+    db.session.add(LedgerEntry(transaction_id=txn.id, account_id=payouts_acc.id, amount_cents=amount_cents))
+    from_acc.balance_cents -= amount_cents
+    payouts_acc.balance_cents += amount_cents
+    txn.status = EntryStatus.CONFIRMED
+
+    withdrawal = WithdrawalRequest(
+        customer_id=customer.id,
+        account_id=from_acc.id,
+        amount_cents=amount_cents,
+        pix_key=pix_key,
+        pix_key_type=pix_key_type,
+        status="pending",
+        transaction_id=txn.id,
+    )
+    db.session.add(withdrawal)
+    _log_audit("withdrawal.requested", actor=customer.id, detail={
+        "amount_cents": amount_cents, "pix_key_type": pix_key_type,
+    })
+
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        existing_txn = Transaction.query.filter_by(idempotency_key=idempotency_key).first()
+        existing_wr = WithdrawalRequest.query.filter_by(transaction_id=existing_txn.id).first()
+        return jsonify(existing_wr.to_dict()), 200
+
+    return jsonify(withdrawal.to_dict()), 201
+
+
+@bp.get("/withdrawals")
+def list_withdrawals():
+    status = request.args.get("status")
+    query = WithdrawalRequest.query
+    if status:
+        query = query.filter_by(status=status)
+    withdrawals = query.order_by(WithdrawalRequest.created_at.desc()).limit(200).all()
+    out = []
+    for w in withdrawals:
+        d = w.to_dict()
+        customer = Customer.query.get(w.customer_id)
+        d["customer_name"] = customer.name if customer else None
+        out.append(d)
+    return jsonify(out)
+
+
+@bp.get("/customers/<customer_id>/withdrawals")
+def list_customer_withdrawals(customer_id):
+    withdrawals = (
+        WithdrawalRequest.query.filter_by(customer_id=customer_id)
+        .order_by(WithdrawalRequest.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    return jsonify([w.to_dict() for w in withdrawals])
+
+
+@bp.post("/withdrawals/<withdrawal_id>/mark-paid")
+def mark_withdrawal_paid(withdrawal_id):
+    """Chamado pelo admin depois de mandar o PIX de verdade (pela conta real
+    do Mercado Pago da empresa) pra chave do cliente. Só registra que o
+    saque foi cumprido — o dinheiro já tinha saído do saldo do cliente
+    quando o pedido foi criado."""
+    withdrawal = WithdrawalRequest.query.get_or_404(withdrawal_id)
+    if withdrawal.status != "pending":
+        return jsonify({"error": f"saque não está pendente (status atual: {withdrawal.status})"}), 409
+
+    data = request.get_json(silent=True) or {}
+    withdrawal.status = "paid"
+    withdrawal.resolved_at = utcnow()
+    withdrawal.admin_note = data.get("note")
+    _log_audit("withdrawal.paid", actor="admin", detail={"withdrawal_id": withdrawal.id})
+    db.session.commit()
+    return jsonify(withdrawal.to_dict())
+
+
+@bp.post("/withdrawals/<withdrawal_id>/mark-failed")
+def mark_withdrawal_failed(withdrawal_id):
+    """O admin não conseguiu completar o PIX de saída (chave inválida, etc.)
+    — estorna o valor de volta pro saldo do cliente."""
+    withdrawal = WithdrawalRequest.query.get_or_404(withdrawal_id)
+    if withdrawal.status != "pending":
+        return jsonify({"error": f"saque não está pendente (status atual: {withdrawal.status})"}), 409
+
+    data = request.get_json(silent=True) or {}
+    from_acc = Account.query.get(withdrawal.account_id)
+    payouts_pending_id = _auto_get_or_create_system_account("system:payouts_pending")
+    payouts_acc = Account.query.get(payouts_pending_id)
+
+    reversal = Transaction(
+        idempotency_key=f"withdrawal-reversal:{withdrawal.id}",
+        rail="withdrawal_pix_reversal",
+        status=EntryStatus.CONFIRMED,
+        metadata_json={"withdrawal_id": withdrawal.id, "reason": data.get("note")},
+    )
+    db.session.add(reversal)
+    db.session.flush()
+    db.session.add(LedgerEntry(transaction_id=reversal.id, account_id=payouts_acc.id, amount_cents=-withdrawal.amount_cents))
+    db.session.add(LedgerEntry(transaction_id=reversal.id, account_id=from_acc.id, amount_cents=withdrawal.amount_cents))
+    payouts_acc.balance_cents -= withdrawal.amount_cents
+    from_acc.balance_cents += withdrawal.amount_cents
+
+    withdrawal.status = "failed"
+    withdrawal.resolved_at = utcnow()
+    withdrawal.admin_note = data.get("note")
+    withdrawal.reversal_transaction_id = reversal.id
+    _log_audit("withdrawal.failed", actor="admin", detail={"withdrawal_id": withdrawal.id, "note": data.get("note")})
+    db.session.commit()
+    return jsonify(withdrawal.to_dict())

@@ -11,6 +11,7 @@
     {% endif %}
     <p class="mono" style="word-break: break-all;">{{ charge.qr_code_payload }}</p>
     <form method="post" action="{{ url_for('pix_simulate', transaction_id=charge.transaction_id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="btn secondary" type="submit">Simular pagamento (sandbox)</button>
     </form>
   </div>

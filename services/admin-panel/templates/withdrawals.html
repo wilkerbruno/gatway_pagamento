@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Saques{% endblock %}
+{% block content %}
+<h1>Saques</h1>
+<p class="mono" style="margin-top:-12px;">
+  Pedidos de saque feitos pelos clientes no portal deles. O valor já saiu do
+  saldo do cliente. Envie o PIX de verdade pela conta real da Divisions Pay
+  no Mercado Pago pra chave abaixo, depois marque como pago. Se não der pra
+  completar (chave errada, etc.), marque como falho -- o valor volta
+  automaticamente pro cliente.
+</p>
+
+<div class="actions">
+  <a href="{{ url_for('withdrawals_list', status='pending') }}" class="btn small {{ 'secondary' if status != 'pending' }}">Pendentes</a>
+  <a href="{{ url_for('withdrawals_list', status='paid') }}" class="btn small {{ 'secondary' if status != 'paid' }}">Pagos</a>
+  <a href="{{ url_for('withdrawals_list', status='failed') }}" class="btn small {{ 'secondary' if status != 'failed' }}">Falhos</a>
+  <a href="{{ url_for('withdrawals_list', status='all') }}" class="btn small {{ 'secondary' if status != 'all' }}">Todos</a>
+</div>
+
+{% if withdrawals %}
+<table>
+  <tr><th>Cliente</th><th>Valor</th><th>Chave PIX</th><th>Tipo</th><th>Pedido em</th><th>Status</th><th></th></tr>
+  {% for w in withdrawals %}
+  <tr>
+    <td>{{ w.customer_name or w.customer_id }}</td>
+    <td class="balance" style="font-size:15px;">R$ {{ "%.2f"|format(w.amount_cents / 100) }}</td>
+    <td class="mono">{{ w.pix_key }}</td>
+    <td>{{ w.pix_key_type }}</td>
+    <td class="mono">{{ w.created_at[:16].replace("T", " ") if w.created_at else "-" }}</td>
+    <td>{{ w.status }}</td>
+    <td>
+      {% if w.status == 'pending' %}
+      <form method="post" action="{{ url_for('withdrawal_mark_paid', withdrawal_id=w.id) }}" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn small">Marcar pago</button>
+      </form>
+      <form method="post" action="{{ url_for('withdrawal_mark_failed', withdrawal_id=w.id) }}" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="note" value="marcado como falho pelo admin">
+        <button type="submit" class="btn small secondary">Marcar falho</button>
+      </form>
+      {% else %}
+      <span class="mono">{{ w.admin_note or "" }}</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="mono">Nenhum saque {{ status if status != 'all' else '' }} no momento.</p>
+{% endif %}
+{% endblock %}

@@ -5,55 +5,77 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Admin{% endblock %} · Divisions Pay</title>
   <style>
-    :root { color-scheme: dark; }
+    :root {
+      color-scheme: dark;
+      --brand: #17c3a0;
+      --brand-dark: #0fa78a;
+      --bg: #0a0b0d;
+      --surface: #141618;
+      --border: #24272b;
+      --text: #f5f7fa;
+      --text-dim: #9aa3ac;
+      --danger: #ff5c72;
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
-      background: #0f1115; color: #e6e6e6;
+      background: var(--bg); color: var(--text);
     }
     header {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 16px 24px; border-bottom: 1px solid #23262e; background: #14161b;
+      padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--surface);
     }
-    header a { color: #e6e6e6; text-decoration: none; font-weight: 600; }
-    nav a { color: #9aa4b2; text-decoration: none; margin-left: 18px; font-size: 14px; }
-    nav a:hover { color: #fff; }
-    main { max-width: 960px; margin: 0 auto; padding: 24px; }
+    header a.brand { color: var(--text); text-decoration: none; font-weight: 700; display:flex; align-items:center; gap:10px; }
+    nav { display:flex; flex-wrap:wrap; gap: 2px 4px; }
+    nav a { color: var(--text-dim); text-decoration: none; padding: 6px 10px; border-radius: 6px; font-size: 13.5px; }
+    nav a:hover { color: #fff; background: rgba(255,255,255,0.04); }
+    nav a.active { color: var(--brand); }
+    main { max-width: 1000px; margin: 0 auto; padding: 24px; }
     h1 { font-size: 22px; margin: 0 0 20px; }
-    h2 { font-size: 16px; color: #9aa4b2; text-transform: uppercase; letter-spacing: .04em; }
+    h2 { font-size: 16px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; }
     table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
-    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #23262e; font-size: 14px; }
-    th { color: #9aa4b2; font-weight: 500; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); font-size: 14px; }
+    th { color: var(--text-dim); font-weight: 500; }
     a.btn, button.btn {
-      display: inline-block; background: #2563eb; color: #fff; border: none;
+      display: inline-block; background: var(--brand); color: #04140f; border: none;
       padding: 8px 14px; border-radius: 6px; font-size: 14px; cursor: pointer;
-      text-decoration: none;
+      text-decoration: none; font-weight: 600;
     }
-    a.btn.secondary, button.btn.secondary { background: #2a2e37; }
-    a.btn.small { padding: 4px 10px; font-size: 12px; }
-    .actions { display: flex; gap: 10px; margin-bottom: 20px; }
+    a.btn.secondary, button.btn.secondary { background: #2a2e37; color: var(--text); font-weight: 500; }
+    a.btn.small, button.btn.small { padding: 4px 10px; font-size: 12px; }
+    .actions { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
     form.card, .card {
-      background: #14161b; border: 1px solid #23262e; border-radius: 10px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
       padding: 20px; margin-bottom: 20px;
     }
-    label { display: block; font-size: 13px; color: #9aa4b2; margin: 12px 0 4px; }
+    label { display: block; font-size: 13px; color: var(--text-dim); margin: 12px 0 4px; }
     input, select {
-      width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a2e37;
-      background: #0f1115; color: #e6e6e6; font-size: 14px;
+      width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--text); font-size: 14px;
     }
+    input:focus, select:focus { outline: none; border-color: var(--brand); }
     .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; }
-    .flash.success { background: #14301f; color: #6ee7a0; border: 1px solid #1f4a2c; }
+    .flash.success { background: rgba(23,195,160,0.12); color: var(--brand); border: 1px solid rgba(23,195,160,0.3); }
     .flash.error { background: #3a1616; color: #ff9b9b; border: 1px solid #5a1f1f; }
-    .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; color: #9aa4b2; }
+    .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; color: var(--text-dim); }
     .balance { font-size: 20px; font-weight: 600; }
+    .badge { display:inline-block; padding: 2px 8px; border-radius: 20px; font-size: 12px; font-weight:700; background: rgba(23,195,160,0.15); color: var(--brand); }
   </style>
 </head>
 <body>
   <header>
-    <a href="{{ url_for('dashboard') }}">💳 Divisions Pay — Admin</a>
+    <a href="{{ url_for('dashboard') }}" class="brand">
+      <svg width="26" height="26" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">
+        <rect x="10" y="8" width="7" height="15" rx="2" fill="#ffffff"/>
+        <rect x="10" y="27" width="13" height="5" rx="2" fill="#17c3a0"/>
+        <path d="M17 8 H21 A10 10 0 0 1 21 28 H17 V23 H21 A5 5 0 0 0 21 13 H17 Z" fill="#17c3a0"/>
+      </svg>
+      Divisions Pay — Admin
+    </a>
     <nav>
       <a href="{{ url_for('dashboard') }}">Clientes</a>
       <a href="{{ url_for('transfer_form') }}">Transferência</a>
+      <a href="{{ url_for('withdrawals_list') }}">Saques</a>
       <a href="{{ url_for('pix_new_form') }}">Gerar PIX</a>
       <a href="{{ url_for('crypto_new_form') }}">Gerar cripto</a>
       <a href="{{ url_for('providers_form') }}">Provedores</a>

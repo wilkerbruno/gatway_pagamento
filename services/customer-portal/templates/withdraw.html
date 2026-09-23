@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Sacar — Divisions Pay{% endblock %}
+{% set active_tab = 'withdraw' %}
+{% block content %}
+
+<div style="font-size:20px;font-weight:800;margin-bottom:4px;">Sacar</div>
+<div style="font-size:13px;color:var(--text-dim);margin-bottom:18px;">
+  Saldo disponível: <strong style="color:var(--text);">R$ {{ balance_display }}</strong>
+</div>
+
+<form method="post" action="{{ url_for('withdraw_submit') }}" class="card">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <label>Tipo de chave PIX</label>
+  <select name="pix_key_type">
+    {% for value, label in pix_key_types.items() %}
+    <option value="{{ value }}">{{ label }}</option>
+    {% endfor %}
+  </select>
+
+  <label>Chave PIX de destino</label>
+  <input type="text" name="pix_key" placeholder="CPF, e-mail, telefone ou chave aleatória" required autofocus>
+
+  <label>Valor</label>
+  <input type="text" name="amount" inputmode="decimal" placeholder="0,00" required>
+
+  <button type="submit" class="btn">Sacar agora</button>
+</form>
+
+<div style="text-align:center; color:var(--text-dim); font-size:12px; margin: 16px 0 24px; line-height:1.5;">
+  O valor sai do seu saldo assim que você pede o saque. O envio pra sua
+  chave PIX é conferido e confirmado pela equipe Divisions Pay.
+</div>
+
+<div style="font-size:15px;font-weight:700;margin-bottom:10px;">Seus saques</div>
+{% if withdrawals %}
+<div class="card" style="padding: 6px 18px;">
+  {% for w in withdrawals %}
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0; {% if not loop.last %}border-bottom:1px solid var(--border);{% endif %}">
+    <div>
+      <div style="font-size:14px;font-weight:600;">R$ {{ "%.2f"|format(w.amount_cents / 100) }}</div>
+      <div style="font-size:12px;color:var(--text-dim);">{{ w.pix_key }} · {{ w.created_at[:10] }}</div>
+    </div>
+    <div style="font-size:12px;font-weight:700; padding:4px 10px; border-radius:20px;
+      {% if w.status == 'paid' %}background:rgba(53,208,127,0.12);color:var(--success);
+      {% elif w.status == 'failed' %}background:rgba(255,92,114,0.12);color:var(--danger);
+      {% else %}background:rgba(124,92,255,0.15);color:var(--brand);{% endif %}">
+      {% if w.status == 'pending' %}Pendente{% elif w.status == 'paid' %}Pago{% else %}Falhou{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card" style="text-align:center; color:var(--text-dim); padding: 24px 18px;">
+  Nenhum saque solicitado ainda.
+</div>
+{% endif %}
+{% endblock %}

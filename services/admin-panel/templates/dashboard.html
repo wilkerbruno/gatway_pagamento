@@ -6,6 +6,9 @@
     <a class="btn secondary" href="{{ url_for('transfer_form') }}">Transferir</a>
     <a class="btn secondary" href="{{ url_for('pix_new_form') }}">Gerar cobrança PIX</a>
     <a class="btn secondary" href="{{ url_for('crypto_new_form') }}">Gerar cobrança cripto</a>
+    {% if pending_withdrawals %}
+    <a class="btn secondary" href="{{ url_for('withdrawals_list') }}">🔔 {{ pending_withdrawals }} saque(s) pendente(s)</a>
+    {% endif %}
   </div>
 
   <h2>Provedor ativo</h2>
