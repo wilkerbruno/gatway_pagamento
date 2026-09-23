@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Novo cliente{% endblock %}
+{% block content %}
+  <h1>Novo cliente</h1>
+  <form class="card" method="post" action="{{ url_for('new_customer_submit') }}">
+    <label>Nome</label>
+    <input type="text" name="name" required>
+    <label>CPF/CNPJ</label>
+    <input type="text" name="document">
+    <label>E-mail</label>
+    <input type="email" name="email">
+    <label>Tipo de carteira</label>
+    <select name="kind">
+      <option value="customer">Cliente</option>
+      <option value="merchant">Lojista</option>
+    </select>
+    <br><br>
+    <button class="btn" type="submit">Criar</button>
+  </form>
+{% endblock %}

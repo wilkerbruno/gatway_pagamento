@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Clientes{% endblock %}
+{% block content %}
+  <div class="actions">
+    <a class="btn" href="{{ url_for('new_customer_form') }}">+ Novo cliente</a>
+    <a class="btn secondary" href="{{ url_for('transfer_form') }}">Transferir</a>
+    <a class="btn secondary" href="{{ url_for('pix_new_form') }}">Gerar cobrança PIX</a>
+  </div>
+
+  <h2>Provedor ativo</h2>
+  <table>
+    <tr><th>PIX</th><td>{{ providers.get('pix', '—') }}</td></tr>
+    <tr><th>Cartão</th><td>{{ providers.get('card', '—') }}</td></tr>
+  </table>
+
+  <h2>Clientes ({{ customers|length }})</h2>
+  {% if customers %}
+  <table>
+    <tr><th>Nome</th><th>Documento</th><th>Saldo</th><th></th></tr>
+    {% for c in customers %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td class="mono">{{ c.document or '—' }}</td>
+      <td>R$ {{ "%.2f"|format(c.account.balance_cents / 100) }}</td>
+      <td><a class="btn small secondary" href="{{ url_for('customer_detail', customer_id=c.id) }}">ver</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p>Nenhum cliente ainda. <a href="{{ url_for('new_customer_form') }}">Criar o primeiro</a>.</p>
+  {% endif %}
+{% endblock %}

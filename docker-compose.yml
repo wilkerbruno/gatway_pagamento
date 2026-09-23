@@ -74,6 +74,23 @@ services:
     ports:
       - "8004:8004"
 
+
+  admin-panel:
+    build: ./services/admin-panel
+    environment:
+      LEDGER_URL: http://core-ledger:8001
+      PIX_URL: http://pix-service:8002
+      CARD_URL: http://card-service:8003
+      CRYPTO_URL: http://crypto-service:8004
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      ADMIN_PANEL_SECRET: ${ADMIN_PANEL_SECRET:-troque-isto}
+    depends_on:
+      - core-ledger
+      - pix-service
+    ports:
+      - "8000:8000"
+
 volumes:
   mysqldata:
   cryptodata:

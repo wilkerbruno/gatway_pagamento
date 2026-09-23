@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Provedores{% endblock %}
+{% block content %}
+  <h1>Provedor ativo por trilho</h1>
+  {% for p in providers %}
+  <form class="card" method="post" action="{{ url_for('providers_submit', rail=p.rail) }}">
+    <label>{{ p.rail|upper }}</label>
+    <select name="provider">
+      {% for opt in ['mercadopago', 'pagarme', 'direct'] %}
+      <option value="{{ opt }}" {% if opt == p.provider %}selected{% endif %}>{{ opt }}</option>
+      {% endfor %}
+    </select>
+    <br><br>
+    <button class="btn" type="submit">Salvar</button>
+  </form>
+  {% endfor %}
+{% endblock %}

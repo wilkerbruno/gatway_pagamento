@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ customer.name }}{% endblock %}
+{% block content %}
+  <h1>{{ customer.name }}</h1>
+  <div class="card">
+    <div class="balance">R$ {{ "%.2f"|format(customer.account.balance_cents / 100) }}</div>
+    <div class="mono">conta: {{ customer.account.id }}</div>
+    <div class="mono">documento: {{ customer.document or '—' }} · e-mail: {{ customer.email or '—' }}</div>
+  </div>
+
+  <h2>Extrato</h2>
+  {% if statement.entries %}
+  <table>
+    <tr><th>Data</th><th>Trilho</th><th>Valor</th><th>Status</th></tr>
+    {% for e in statement.entries %}
+    <tr>
+      <td>{{ e.created_at }}</td>
+      <td>{{ e.rail }}</td>
+      <td>{{ "%.2f"|format(e.amount_cents / 100) }}</td>
+      <td>{{ e.transaction_status }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p>Nenhum lançamento ainda.</p>
+  {% endif %}
+{% endblock %}

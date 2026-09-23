@@ -202,6 +202,14 @@ def get_transaction_by_external_ref(external_ref):
 from .models import Customer
 
 
+@bp.get("/customers")
+def list_customers():
+    limit = min(int(request.args.get("limit", 50)), 200)
+    offset = int(request.args.get("offset", 0))
+    customers = Customer.query.order_by(Customer.created_at.desc()).offset(offset).limit(limit).all()
+    return jsonify([c.to_dict() for c in customers])
+
+
 @bp.post("/customers")
 def create_customer():
     """Cria um cliente e já abre a carteira (Account) dele junto."""

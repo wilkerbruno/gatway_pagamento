@@ -124,3 +124,19 @@ licenciamento como Instituição de Pagamento (emissora de moeda eletrônica)
 é deixar esse saldo **sair** da plataforma: PIX para terceiros fora do seu
 sistema, TED, saque para conta bancária externa, cartão pré-pago vinculado
 à carteira. Se/quando for construir isso, volte no `docs/COMPLIANCE.md`.
+
+## Painel admin (web)
+
+Serviço `admin-panel`, na porta 8000, protegido por login (HTTP Basic Auth —
+`ADMIN_USER`/`ADMIN_PASSWORD` no `.env`, troque os valores padrão antes de
+expor publicamente). Dá pra:
+
+- ver clientes e saldo
+- criar cliente
+- fazer transferência interna
+- gerar uma cobrança PIX de teste (mostra o QR Code e tem botão "simular
+  pagamento" pro fluxo sandbox)
+- trocar o provedor ativo de PIX/cartão
+
+Acesse em `http://localhost:8000` (local) ou pelo domínio que você habilitar
+pra esse serviço no EasyPanel.

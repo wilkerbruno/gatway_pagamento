@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Transferência{% endblock %}
+{% block content %}
+  <h1>Transferência interna</h1>
+  <form class="card" method="post" action="{{ url_for('transfer_submit') }}">
+    <label>De</label>
+    <select name="from_account_id" required>
+      {% for c in customers %}
+      <option value="{{ c.account.id }}">{{ c.name }} (R$ {{ "%.2f"|format(c.account.balance_cents / 100) }})</option>
+      {% endfor %}
+    </select>
+    <label>Para</label>
+    <select name="to_account_id" required>
+      {% for c in customers %}
+      <option value="{{ c.account.id }}">{{ c.name }}</option>
+      {% endfor %}
+    </select>
+    <label>Valor (R$)</label>
+    <input type="text" name="amount_brl" placeholder="10,00" required>
+    <br><br>
+    <button class="btn" type="submit">Transferir</button>
+  </form>
+{% endblock %}

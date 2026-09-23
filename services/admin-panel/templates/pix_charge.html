@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Cobrança PIX gerada{% endblock %}
+{% block content %}
+  <h1>Cobrança PIX gerada</h1>
+  <div class="card">
+    <p>Provedor: <strong>{{ charge.provider }}</strong></p>
+    <p class="mono">ref: {{ charge.provider_ref }}</p>
+    <p class="mono">transação: {{ charge.transaction_id }}</p>
+    {% if charge.qr_code_base64 %}
+      <img src="data:image/png;base64,{{ charge.qr_code_base64 }}" alt="QR Code PIX" style="max-width:220px;border-radius:8px;">
+    {% endif %}
+    <p class="mono" style="word-break: break-all;">{{ charge.qr_code_payload }}</p>
+    <form method="post" action="{{ url_for('pix_simulate', transaction_id=charge.transaction_id) }}">
+      <button class="btn secondary" type="submit">Simular pagamento (sandbox)</button>
+    </form>
+  </div>
+{% endblock %}
