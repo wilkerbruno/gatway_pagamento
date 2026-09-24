@@ -12,8 +12,11 @@ segurança padrão, proteção CSRF em todo POST, e o rate-limit de tentativas
 de login mora no core-ledger (compartilhado com o admin-panel se algum dia
 precisar), não duplicado aqui.
 """
+import hashlib
+import hmac
 import os
 import secrets
+import time
 import uuid
 
 import requests
@@ -21,6 +24,14 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("CUSTOMER_PORTAL_SECRET", "troque-isto-em-producao")
+
+# URL pública do admin-panel (a que o navegador do admin consegue acessar de
+# fora -- não o endereço interno do Docker) e segredo compartilhado com ele
+# pra assinar o "bilhete" de handoff: o admin digita a senha aqui, uma vez
+# só, e é redirecionado já autenticado pro painel dele (ver login_submit()).
+ADMIN_PANEL_PUBLIC_URL = os.environ.get("ADMIN_PANEL_PUBLIC_URL", "").rstrip("/")
+SSO_SIGNING_SECRET = os.environ.get("SSO_SIGNING_SECRET", "troque-isto-em-producao")
+SSO_TOKEN_TTL_SECONDS = 60
 
 # Cookie de sessão o mais travado possível: só HTTPS (EasyPanel termina TLS
 # na borda e repassa por HTTP interno — SESSION_COOKIE_SECURE ainda funciona
@@ -101,6 +112,16 @@ def api_get(path, **kwargs):
     return r.json()
 
 
+def _build_sso_url(admin_id: str) -> str:
+    """Assina um "bilhete" de handoff de curtíssima duração (60s, uso único
+    na prática porque o admin-panel confere o prazo) pra logar o admin no
+    painel dele sem pedir a senha de novo -- ele já provou quem é aqui."""
+    exp = int(time.time()) + SSO_TOKEN_TTL_SECONDS
+    manifest = f"{admin_id}:{exp}"
+    sig = hmac.new(SSO_SIGNING_SECRET.encode(), manifest.encode(), hashlib.sha256).hexdigest()
+    return f"{ADMIN_PANEL_PUBLIC_URL}/sso?admin_id={admin_id}&exp={exp}&sig={sig}"
+
+
 def current_customer():
     customer_id = session.get("customer_id")
     if not customer_id:
@@ -147,7 +168,11 @@ def login_form():
 
 @app.post("/login")
 def login_submit():
-    r = requests.post(f"{LEDGER_URL}/customers/authenticate", json={
+    """Login único: essa mesma tela serve o admin e os clientes. O
+    core-ledger diz quem é quem (campo "role") -- cliente segue normal
+    (sessão aqui mesmo); admin é redirecionado, já autenticado, pro painel
+    dele via handoff assinado (ver _build_sso_url)."""
+    r = requests.post(f"{LEDGER_URL}/auth/login", json={
         "login": request.form["login"],
         "password": request.form["password"],
     }, timeout=10)
@@ -155,11 +180,19 @@ def login_submit():
         flash("Muitas tentativas erradas. Aguarde alguns minutos e tente de novo.", "error")
         return redirect(url_for("login_form"))
     if r.status_code != 200:
-        flash("Documento/e-mail ou senha incorretos.", "error")
+        flash("Login ou senha incorretos.", "error")
         return redirect(url_for("login_form"))
-    customer = r.json()
+
+    account = r.json()
     session.clear()
-    session["customer_id"] = customer["id"]
+
+    if account["role"] == "admin":
+        if not ADMIN_PANEL_PUBLIC_URL:
+            flash("Login de administrador reconhecido, mas o painel do admin ainda não foi configurado (falta ADMIN_PANEL_PUBLIC_URL). Fale com quem administra o servidor.", "error")
+            return redirect(url_for("login_form"))
+        return redirect(_build_sso_url(account["id"]))
+
+    session["customer_id"] = account["id"]
     session.permanent = True
     return redirect(url_for("dashboard"))
 
@@ -167,6 +200,91 @@ def login_submit():
 @app.post("/logout")
 def logout():
     session.clear()
+    return redirect(url_for("login_form"))
+
+
+# --- Esqueci minha senha: código por e-mail, em 3 telas ---------------------
+#
+# Serve admin e cliente igual (o core-ledger resolve quem é o login). O
+# reset_token do passo 2 fica só na sessão do servidor (nunca na URL nem
+# visível pro usuário) até o passo 3 confirmar a senha nova.
+
+@app.get("/esqueci-senha")
+def forgot_password_form():
+    return render_template("forgot_password.html")
+
+
+@app.post("/esqueci-senha")
+def forgot_password_submit():
+    login = request.form.get("login", "").strip()
+    if login:
+        requests.post(f"{LEDGER_URL}/auth/password-reset/request", json={"login": login}, timeout=10)
+    # Sempre segue pro passo do código, exista ou não esse login -- não dá
+    # pra essa tela virar um jeito de descobrir quais contas existem.
+    session["pwreset_login"] = login
+    flash("Se esse login existir, enviamos um código de 6 dígitos pro e-mail cadastrado.", "success")
+    return redirect(url_for("forgot_password_code_form"))
+
+
+@app.get("/esqueci-senha/codigo")
+def forgot_password_code_form():
+    login = session.get("pwreset_login")
+    if not login:
+        return redirect(url_for("forgot_password_form"))
+    return render_template("forgot_password_code.html", login=login)
+
+
+@app.post("/esqueci-senha/codigo")
+def forgot_password_code_submit():
+    login = session.get("pwreset_login")
+    if not login:
+        return redirect(url_for("forgot_password_form"))
+
+    code = request.form.get("code", "").strip()
+    r = requests.post(f"{LEDGER_URL}/auth/password-reset/verify", json={"login": login, "code": code}, timeout=10)
+    if r.status_code != 200:
+        flash(r.json().get("error", "Código inválido."), "error")
+        return redirect(url_for("forgot_password_code_form"))
+
+    data = r.json()
+    # O reset_token fica só na sessão (cookie assinado, HttpOnly) -- nunca
+    # aparece numa URL nem em campo de formulário visível/editável.
+    session["pwreset_token"] = data["reset_token"]
+    session["pwreset_role"] = data["role"]
+    session.pop("pwreset_login", None)
+    return redirect(url_for("forgot_password_new_form"))
+
+
+@app.get("/esqueci-senha/nova-senha")
+def forgot_password_new_form():
+    if not session.get("pwreset_token"):
+        return redirect(url_for("forgot_password_form"))
+    return render_template("forgot_password_new.html")
+
+
+@app.post("/esqueci-senha/nova-senha")
+def forgot_password_new_submit():
+    reset_token = session.get("pwreset_token")
+    if not reset_token:
+        return redirect(url_for("forgot_password_form"))
+
+    new_password = request.form.get("new_password", "")
+    confirm_password = request.form.get("confirm_password", "")
+    if new_password != confirm_password:
+        flash("As senhas não são iguais. Digite a mesma senha nos dois campos.", "error")
+        return redirect(url_for("forgot_password_new_form"))
+
+    r = requests.post(f"{LEDGER_URL}/auth/password-reset/confirm", json={
+        "reset_token": reset_token,
+        "new_password": new_password,
+    }, timeout=10)
+    if r.status_code != 200:
+        flash(r.json().get("error", "Não foi possível trocar a senha."), "error")
+        return redirect(url_for("forgot_password_new_form"))
+
+    session.pop("pwreset_token", None)
+    session.pop("pwreset_role", None)
+    flash("Senha alterada com sucesso! Já pode entrar com ela.", "success")
     return redirect(url_for("login_form"))
 
 

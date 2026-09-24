@@ -229,6 +229,56 @@ class AuditLog(db.Model):
         }
 
 
+class AdminUser(db.Model):
+    """Conta de administrador de verdade (dono/operador da Divisions Pay).
+    Substitui o login fixo por variável de ambiente que o admin-panel usava
+    (HTTP Basic Auth) — agora é uma conta no banco, com e-mail, pra dar pra
+    fazer login numa tela normal e recuperar senha por e-mail igual o
+    cliente. A primeira conta é criada sozinha no boot a partir de
+    ADMIN_BOOTSTRAP_EMAIL/ADMIN_BOOTSTRAP_PASSWORD (ver __init__.py)."""
+
+    __tablename__ = "admin_users"
+
+    id = db.Column(db.String(UUID_LEN), primary_key=True, default=gen_uuid)
+    name = db.Column(db.String(255), nullable=False)
+    email = db.Column(db.String(255), nullable=False, unique=True, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+    def to_dict(self):
+        return {"id": self.id, "name": self.name, "email": self.email}
+
+
+class PasswordResetCode(db.Model):
+    """Código de 'esqueci minha senha', enviado por e-mail. Serve tanto pra
+    Customer quanto pra AdminUser (subject_type diz qual e subject_id é o id
+    dele). Fluxo em 2 etapas pra nunca deixar o código de 6 dígitos valer
+    sozinho por muito tempo nem circular mais do que precisa:
+
+    1) /auth/password-reset/request: gera o código (6 dígitos), manda por
+       e-mail. Só o hash fica salvo.
+    2) /auth/password-reset/verify: troca o código por um reset_token de uso
+       único (opaco, ~10min de validade) — só o hash do token fica salvo.
+    3) /auth/password-reset/confirm: troca o reset_token pela senha nova.
+
+    "attempts" limita tentativa de força bruta do código de 6 dígitos (10^6
+    possibilidades não é nada se não travar depois de algumas erradas)."""
+
+    __tablename__ = "password_reset_codes"
+
+    id = db.Column(db.String(UUID_LEN), primary_key=True, default=gen_uuid)
+    subject_type = db.Column(db.String(20), nullable=False)  # "customer" | "admin"
+    subject_id = db.Column(db.String(UUID_LEN), nullable=False, index=True)
+    code_hash = db.Column(db.String(64), nullable=False)
+    code_expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    attempts = db.Column(db.Integer, nullable=False, default=0)
+    verified_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    reset_token_hash = db.Column(db.String(64), nullable=True)
+    reset_token_expires_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    used_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+
 class PlatformSetting(db.Model):
     """Configuração chave/valor simples da plataforma: qual conta recebe a
     taxa de 1% (platform_account_id) e o percentual em si (fee_bps, em

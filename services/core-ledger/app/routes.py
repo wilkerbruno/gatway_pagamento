@@ -1,10 +1,16 @@
+import datetime as _dt
+import hashlib
+import logging
+import secrets
+
 from flask import Blueprint, request, jsonify
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from .mailer import send_email
 from .models import (
     db, Account, Transaction, LedgerEntry, WebhookEvent, EntryStatus,
-    PlatformSetting, WithdrawalRequest, AuditLog, utcnow,
+    PlatformSetting, WithdrawalRequest, AuditLog, AdminUser, PasswordResetCode, utcnow,
 )
 
 bp = Blueprint("ledger", __name__)
@@ -423,6 +429,222 @@ def set_customer_password(customer_id):
     _log_audit("customer.password_changed", actor=customer.id)
     db.session.commit()
     return jsonify(customer.to_dict())
+
+
+# --- Login único (admin ou cliente) e recuperação de senha por e-mail -----
+#
+# Uma tela de login só, pro dono do sistema e pros clientes: tenta como
+# admin primeiro, depois como cliente, e devolve "role" pra quem chamou
+# (customer-portal) saber pra onde mandar o navegador. A recuperação de
+# senha (código por e-mail) usa a mesma tabela PasswordResetCode pros dois
+# tipos de conta -- só muda o "subject_type".
+
+AUTH_LOCKOUT_MAX_ATTEMPTS = 8
+AUTH_LOCKOUT_WINDOW_MINUTES = 15
+PASSWORD_RESET_CODE_TTL_MINUTES = 10
+PASSWORD_RESET_TOKEN_TTL_MINUTES = 10
+PASSWORD_RESET_MAX_ATTEMPTS = 5
+
+
+def _hash_secret(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _generate_numeric_code(length: int = 6) -> str:
+    return "".join(secrets.choice("0123456789") for _ in range(length))
+
+
+def _is_expired(expires_at) -> bool:
+    """Compara um datetime salvo no banco com "agora", sem quebrar se um dos
+    dois for timezone-aware e o outro não -- MySQL (e SQLite) costumam
+    devolver o datetime sem tzinfo mesmo quando a coluna é
+    DateTime(timezone=True), então comparar direto com utcnow() (que É
+    aware) derruba com TypeError."""
+    if expires_at is None:
+        return True
+    now = utcnow()
+    if expires_at.tzinfo is None:
+        now = now.replace(tzinfo=None)
+    return expires_at < now
+
+
+def _resolve_login_subject(login: str):
+    """Acha quem é esse login: admin (por e-mail) ou cliente (documento ou
+    e-mail). Retorna (subject_type, subject) ou (None, None)."""
+    admin = AdminUser.query.filter_by(email=login).first()
+    if admin:
+        return "admin", admin
+    customer = Customer.query.filter(
+        (Customer.document == login) | (Customer.email == login)
+    ).first()
+    if customer:
+        return "customer", customer
+    return None, None
+
+
+@bp.post("/auth/login")
+def auth_login():
+    """Login único: tenta como admin primeiro, depois como cliente do
+    portal. A resposta traz "role" ("admin"|"customer") pra quem chamou
+    decidir pra onde mandar o usuário -- painel do admin ou painel do
+    cliente."""
+    data = request.get_json(force=True)
+    login = (data.get("login") or "").strip()
+    password = data.get("password", "")
+
+    cutoff = utcnow() - _dt.timedelta(minutes=AUTH_LOCKOUT_WINDOW_MINUTES)
+    recent_failures = AuditLog.query.filter(
+        AuditLog.event_type == "auth.login_failed",
+        AuditLog.actor == login,
+        AuditLog.created_at > cutoff,
+    ).count()
+    if recent_failures >= AUTH_LOCKOUT_MAX_ATTEMPTS:
+        return jsonify({
+            "error": f"muitas tentativas erradas. Tente de novo em {AUTH_LOCKOUT_WINDOW_MINUTES} minutos."
+        }), 429
+
+    admin = AdminUser.query.filter_by(email=login).first()
+    if admin and check_password_hash(admin.password_hash, password):
+        _log_audit("auth.login_success", actor=f"admin:{admin.id}")
+        db.session.commit()
+        return jsonify({"role": "admin", **admin.to_dict()})
+
+    customer = Customer.query.filter(
+        (Customer.document == login) | (Customer.email == login)
+    ).first()
+    if customer and customer.password_hash and check_password_hash(customer.password_hash, password):
+        _log_audit("auth.login_success", actor=f"customer:{customer.id}")
+        db.session.commit()
+        return jsonify({"role": "customer", **customer.to_dict()})
+
+    _log_audit("auth.login_failed", actor=login)
+    db.session.commit()
+    return jsonify({"error": "credenciais inválidas"}), 401
+
+
+@bp.post("/auth/password-reset/request")
+def password_reset_request():
+    """Passo 1: gera um código de 6 dígitos e manda por e-mail. Sempre
+    responde com a mesma mensagem genérica, exista ou não esse login --
+    senão dá pra usar essa tela pra descobrir quais e-mails/documentos têm
+    conta no sistema (enumeração de usuários)."""
+    data = request.get_json(force=True)
+    login = (data.get("login") or "").strip()
+    generic_message = {"message": "Se esse login existir e tiver e-mail cadastrado, enviamos um código pra ele."}
+
+    if not login:
+        return jsonify(generic_message), 200
+
+    subject_type, subject = _resolve_login_subject(login)
+    email = getattr(subject, "email", None) if subject else None
+    if not subject or not email:
+        _log_audit("password_reset.requested_unknown", actor=login)
+        db.session.commit()
+        return jsonify(generic_message), 200
+
+    code = _generate_numeric_code()
+    db.session.add(PasswordResetCode(
+        subject_type=subject_type,
+        subject_id=subject.id,
+        code_hash=_hash_secret(code),
+        code_expires_at=utcnow() + _dt.timedelta(minutes=PASSWORD_RESET_CODE_TTL_MINUTES),
+    ))
+    _log_audit("password_reset.requested", actor=f"{subject_type}:{subject.id}")
+
+    try:
+        send_email(
+            email,
+            "Seu código de recuperação — Divisions Pay",
+            f"Seu código para redefinir a senha é: {code}\n\n"
+            f"Ele vale por {PASSWORD_RESET_CODE_TTL_MINUTES} minutos. "
+            "Se você não pediu isso, pode ignorar este e-mail.",
+        )
+    except Exception:
+        # Nunca deixa quem chamou saber se o e-mail existe ou nao, e nunca
+        # derruba a operacao por causa disso -- so registra no log do
+        # servico, pro admin perceber que o SMTP esta com problema.
+        logging.getLogger(__name__).exception(
+            "falha ao enviar e-mail de recuperacao de senha (subject_type=%s subject_id=%s)",
+            subject_type, subject.id,
+        )
+
+    db.session.commit()
+    return jsonify(generic_message), 200
+
+
+@bp.post("/auth/password-reset/verify")
+def password_reset_verify():
+    """Passo 2: troca o código de 6 dígitos por um reset_token de uso único
+    (curto, ~10min), sem o qual não dá pra trocar a senha."""
+    data = request.get_json(force=True)
+    login = (data.get("login") or "").strip()
+    code = (data.get("code") or "").strip()
+
+    subject_type, subject = _resolve_login_subject(login)
+    if not subject:
+        return jsonify({"error": "código inválido ou expirado"}), 400
+
+    row = (
+        PasswordResetCode.query
+        .filter_by(subject_type=subject_type, subject_id=subject.id, used_at=None)
+        .order_by(PasswordResetCode.created_at.desc())
+        .first()
+    )
+    if not row or _is_expired(row.code_expires_at):
+        return jsonify({"error": "código inválido ou expirado"}), 400
+    if row.attempts >= PASSWORD_RESET_MAX_ATTEMPTS:
+        return jsonify({"error": "muitas tentativas -- peça um código novo"}), 429
+
+    if row.code_hash != _hash_secret(code):
+        row.attempts += 1
+        db.session.commit()
+        return jsonify({"error": "código incorreto"}), 400
+
+    reset_token = secrets.token_urlsafe(32)
+    row.verified_at = utcnow()
+    row.reset_token_hash = _hash_secret(reset_token)
+    row.reset_token_expires_at = utcnow() + _dt.timedelta(minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES)
+    _log_audit("password_reset.verified", actor=f"{subject_type}:{subject.id}")
+    db.session.commit()
+
+    return jsonify({"reset_token": reset_token, "role": subject_type})
+
+
+@bp.post("/auth/password-reset/confirm")
+def password_reset_confirm():
+    """Passo 3: troca o reset_token (do passo 2) pela senha nova."""
+    data = request.get_json(force=True)
+    reset_token = (data.get("reset_token") or "").strip()
+    new_password = data.get("new_password") or ""
+
+    if not reset_token:
+        return jsonify({"error": "token inválido"}), 400
+
+    weak = _password_weakness(new_password)
+    if weak:
+        return jsonify({"error": weak}), 400
+
+    row = (
+        PasswordResetCode.query
+        .filter_by(reset_token_hash=_hash_secret(reset_token), used_at=None)
+        .first()
+    )
+    if not row or _is_expired(row.reset_token_expires_at):
+        return jsonify({"error": "token inválido ou expirado -- peça a recuperação de novo"}), 400
+
+    if row.subject_type == "admin":
+        subject = AdminUser.query.get(row.subject_id)
+    else:
+        subject = Customer.query.get(row.subject_id)
+    if not subject:
+        return jsonify({"error": "conta não encontrada"}), 404
+
+    subject.password_hash = generate_password_hash(new_password)
+    row.used_at = utcnow()
+    _log_audit("password_reset.completed", actor=f"{row.subject_type}:{row.subject_id}")
+    db.session.commit()
+
+    return jsonify({"status": "ok", "role": row.subject_type})
 
 
 # --- Configuracoes da plataforma: conta e percentual da taxa -------------

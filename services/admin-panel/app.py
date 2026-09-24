@@ -1,20 +1,22 @@
 """admin-panel — painel web simples pra operar o gateway sem precisar de curl.
 
-Protegido por HTTP Basic Auth (ADMIN_USER / ADMIN_PASSWORD via env). Fala com
-core-ledger e pix-service pelos endereços internos — nunca expõe as APIs de
-pagamento diretamente pro navegador, só este painel.
+Login: não existe mais Basic Auth (aquele popup do navegador) nem senha
+fixa em variável de ambiente. Quem entra é uma AdminUser de verdade (com
+e-mail, cadastrada no core-ledger), autenticada numa tela de login única
+compartilhada com os clientes -- ela mora no customer-portal. Quando o
+core-ledger confirma que é um admin, o customer-portal gera um "bilhete" de
+handoff assinado (HMAC, válido por 60s) e redireciona o navegador pra cá,
+em /sso, que troca esse bilhete por uma sessão aqui. Sem sessão válida,
+qualquer rota protegida manda o navegador de volta pro login único.
 
-Segurança: cabeçalhos padrão, CSRF em todo POST, e um limite (best-effort,
-em memória) de tentativas de login erradas por IP — o admin-panel usa um
-único login compartilhado (Basic Auth), então o travamento é por IP, não
-por usuário; reinicia se o serviço reiniciar, o que é aceitável pra essa
-camada (a auditoria e o travamento por conta de cliente, que importam mais,
-já estão no core-ledger).
+Fala com core-ledger e pix-service pelos endereços internos — nunca expõe
+as APIs de pagamento diretamente pro navegador, só este painel.
 """
+import hashlib
+import hmac
 import os
 import secrets
 import time
-from collections import defaultdict
 from functools import wraps
 
 import requests
@@ -27,6 +29,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SECURE=os.environ.get("FORCE_HTTPS_COOKIES", "true").lower() != "false",
     SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 2,  # 2h de sessão parada = desloga
 )
 
 LEDGER_URL = os.environ.get("LEDGER_URL", "http://core-ledger:8001")
@@ -34,37 +37,23 @@ PIX_URL = os.environ.get("PIX_URL", "http://pix-service:8002")
 CARD_URL = os.environ.get("CARD_URL", "http://card-service:8003")
 CRYPTO_URL = os.environ.get("CRYPTO_URL", "http://crypto-service:8004")
 
-ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "changeme")
-
-LOGIN_LOCKOUT_MAX_ATTEMPTS = 10
-LOGIN_LOCKOUT_WINDOW_SECONDS = 15 * 60
-_failed_attempts = defaultdict(list)  # ip -> [timestamps]
-
-
-def _client_ip():
-    return request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
-
-
-def _is_locked_out(ip):
-    now = time.time()
-    _failed_attempts[ip] = [t for t in _failed_attempts[ip] if now - t < LOGIN_LOCKOUT_WINDOW_SECONDS]
-    return len(_failed_attempts[ip]) >= LOGIN_LOCKOUT_MAX_ATTEMPTS
+# URL pública do customer-portal (onde mora a tela de login única) e o
+# segredo compartilhado com ele pra validar o bilhete de handoff em /sso.
+CUSTOMER_PORTAL_PUBLIC_URL = os.environ.get("CUSTOMER_PORTAL_PUBLIC_URL", "").rstrip("/")
+SSO_SIGNING_SECRET = os.environ.get("SSO_SIGNING_SECRET", "troque-isto-em-producao")
 
 
 def require_auth(f):
     @wraps(f)
     def wrapped(*args, **kwargs):
-        ip = _client_ip()
-        if _is_locked_out(ip):
-            return Response("Muitas tentativas de login erradas. Tente de novo mais tarde.", 429)
-
-        auth = request.authorization
-        if not auth or auth.username != ADMIN_USER or auth.password != ADMIN_PASSWORD:
-            _failed_attempts[ip].append(time.time())
+        if not session.get("admin_id"):
+            if CUSTOMER_PORTAL_PUBLIC_URL:
+                return redirect(f"{CUSTOMER_PORTAL_PUBLIC_URL}/login")
             return Response(
-                "Autenticação necessária", 401,
-                {"WWW-Authenticate": 'Basic realm="Admin do Gateway"'},
+                "Não autenticado, e o login único (env CUSTOMER_PORTAL_PUBLIC_URL) "
+                "ainda não foi configurado nesse servidor -- fale com quem administra "
+                "a infraestrutura.",
+                401,
             )
         return f(*args, **kwargs)
     return wrapped
@@ -145,6 +134,46 @@ def bad_request(e):
 def health():
     # sem auth — pra checagem de infra (EasyPanel, load balancer, etc.)
     return {"status": "ok"}
+
+
+@app.get("/sso")
+def sso_login():
+    """Troca o bilhete de handoff assinado pelo customer-portal (depois que
+    o admin já provou a senha por lá, na tela de login única) por uma
+    sessão aqui. O token vale 60s -- é só o tempo do redirect acontecer,
+    não dá pra reutilizar depois disso, e a assinatura HMAC garante que só
+    quem tem o mesmo SSO_SIGNING_SECRET (ou seja, o customer-portal) pôde
+    ter gerado essa URL."""
+    admin_id = request.args.get("admin_id", "")
+    exp = request.args.get("exp", "")
+    sig = request.args.get("sig", "")
+
+    if not admin_id or not exp or not sig:
+        abort(400, description="link de acesso inválido.")
+
+    manifest = f"{admin_id}:{exp}"
+    expected_sig = hmac.new(SSO_SIGNING_SECRET.encode(), manifest.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_sig, sig):
+        abort(400, description="link de acesso inválido ou adulterado.")
+
+    try:
+        if int(exp) < time.time():
+            abort(400, description="link de acesso expirado -- faça login de novo.")
+    except ValueError:
+        abort(400, description="link de acesso inválido.")
+
+    session.clear()
+    session["admin_id"] = admin_id
+    session.permanent = True
+    return redirect(url_for("dashboard"))
+
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    if CUSTOMER_PORTAL_PUBLIC_URL:
+        return redirect(f"{CUSTOMER_PORTAL_PUBLIC_URL}/login")
+    return redirect(url_for("dashboard"))
 
 
 @app.get("/")

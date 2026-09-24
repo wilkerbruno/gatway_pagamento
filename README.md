@@ -127,11 +127,39 @@ licenciamento como Instituição de Pagamento (emissora de moeda eletrônica)
 sistema, TED, saque para conta bancária externa, cartão pré-pago vinculado
 à carteira. Se/quando for construir isso, volte no `docs/COMPLIANCE.md`.
 
+## Login único (admin + clientes)
+
+Não tem mais aquele popup de login do navegador (HTTP Basic Auth). Agora tem
+uma tela de login normal, em `/login` no **customer-portal** — a mesma pra
+quem administra o sistema e pra quem é cliente. Ela pergunta login+senha uma
+vez, o core-ledger decide se é uma conta de admin ou de cliente, e manda o
+navegador pro lugar certo sozinho:
+
+- **Cliente** → fica logado ali mesmo, cai no painel dele (o "banco").
+- **Admin** → é redirecionado, já autenticado, pro `admin-panel` (via um
+  "bilhete" assinado de uso único que vale 60 segundos — não pede a senha de
+  novo lá).
+
+Tem também **"Esqueci minha senha"**, pros dois tipos de conta: pede o
+login, manda um código de 6 dígitos por e-mail (válido por 10 minutos, até 5
+tentativas erradas antes de precisar pedir outro), confirma o código, e só
+depois deixa digitar (e confirmar) a senha nova.
+
+Pra isso tudo funcionar em produção, três coisas precisam estar configuradas
+no `.env` (veja `.env.example`):
+1. `ADMIN_BOOTSTRAP_EMAIL`/`ADMIN_BOOTSTRAP_PASSWORD` — cria a primeira conta
+   de admin no primeiro boot do core-ledger (só uma vez).
+2. `ADMIN_PANEL_PUBLIC_URL`/`CUSTOMER_PORTAL_PUBLIC_URL` — os domínios
+   públicos de cada painel no EasyPanel (não o endereço interno do Docker).
+3. `SSO_SIGNING_SECRET` — mesmo valor nos dois serviços, assina o bilhete de
+   handoff.
+4. `SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD`/`SMTP_FROM` — sem isso, o código
+   de recuperação de senha não é enviado (o pedido não quebra, só não chega
+   e-mail nenhum).
+
 ## Painel admin (web)
 
-Serviço `admin-panel`, na porta 8000, protegido por login (HTTP Basic Auth —
-`ADMIN_USER`/`ADMIN_PASSWORD` no `.env`, troque os valores padrão antes de
-expor publicamente). Dá pra:
+Serviço `admin-panel`, na porta 8000. Dá pra:
 
 - ver clientes e saldo
 - criar cliente

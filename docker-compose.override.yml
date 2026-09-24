@@ -28,8 +28,10 @@ services:
       # localhost é http puro -- sem isso, o cookie de sessão marcado como
       # "Secure" nunca voltaria e o login pareceria não funcionar.
       FORCE_HTTPS_COOKIES: "false"
+      CUSTOMER_PORTAL_PUBLIC_URL: "http://localhost:8006"
   customer-portal:
     ports:
       - "8006:8006"
     environment:
       FORCE_HTTPS_COOKIES: "false"
+      ADMIN_PANEL_PUBLIC_URL: "http://localhost:8000"

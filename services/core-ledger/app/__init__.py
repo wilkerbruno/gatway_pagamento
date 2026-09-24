@@ -1,7 +1,8 @@
 import os
 from flask import Flask
 from sqlalchemy import inspect, text
-from .models import db
+from werkzeug.security import generate_password_hash
+from .models import db, AdminUser
 
 
 def _run_auto_migrations(app):
@@ -61,6 +62,33 @@ def _run_auto_migrations(app):
                     )
 
 
+def _bootstrap_admin_user(app):
+    """A primeira conta de admin não vem de um cadastro manual (não existe
+    "criar admin" pelo painel, seria um jeito fácil de qualquer um criar
+    acesso próprio) -- vem das env vars ADMIN_BOOTSTRAP_EMAIL/
+    ADMIN_BOOTSTRAP_PASSWORD. Só age se ainda não existir NENHUM AdminUser
+    no banco, então rodar isso de novo depois que já existe conta não
+    reseta nada -- pra trocar a senha do admin, é pelo fluxo de "esqueci
+    minha senha" (por e-mail), não mexendo direto no .env."""
+    if AdminUser.query.first() is not None:
+        return
+
+    email = os.environ.get("ADMIN_BOOTSTRAP_EMAIL")
+    password = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD")
+    if not email or not password:
+        app.logger.warning(
+            "nenhum AdminUser existe ainda e ADMIN_BOOTSTRAP_EMAIL/"
+            "ADMIN_BOOTSTRAP_PASSWORD não estão configurados -- ninguém "
+            "vai conseguir logar como admin até isso ser resolvido."
+        )
+        return
+
+    name = os.environ.get("ADMIN_BOOTSTRAP_NAME", "Admin")
+    db.session.add(AdminUser(name=name, email=email, password_hash=generate_password_hash(password)))
+    db.session.commit()
+    app.logger.info("conta de admin inicial criada para %s", email)
+
+
 def create_app():
     app = Flask(__name__)
     app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
@@ -79,5 +107,9 @@ def create_app():
             _run_auto_migrations(app)
         except Exception:
             app.logger.exception("auto-migration step failed; continuing boot")
+        try:
+            _bootstrap_admin_user(app)
+        except Exception:
+            app.logger.exception("admin bootstrap step failed; continuing boot")
 
     return app

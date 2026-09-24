@@ -19,6 +19,15 @@ services:
     build: ./services/core-ledger
     environment:
       DATABASE_URL: mysql+pymysql://root:root@mysql:3306/ledger
+      ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD}
+      ADMIN_BOOTSTRAP_NAME: ${ADMIN_BOOTSTRAP_NAME:-Admin}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
     depends_on:
       mysql:
         condition: service_healthy
@@ -69,10 +78,10 @@ services:
       PIX_URL: http://pix-service:8002
       CARD_URL: http://card-service:8003
       CRYPTO_URL: http://crypto-service:8004
-      ADMIN_USER: ${ADMIN_USER:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
       ADMIN_PANEL_SECRET: ${ADMIN_PANEL_SECRET:-troque-isto}
       FORCE_HTTPS_COOKIES: ${FORCE_HTTPS_COOKIES:-true}
+      CUSTOMER_PORTAL_PUBLIC_URL: ${CUSTOMER_PORTAL_PUBLIC_URL}
+      SSO_SIGNING_SECRET: ${SSO_SIGNING_SECRET:-troque-isto}
     depends_on:
       - core-ledger
       - pix-service
@@ -84,6 +93,8 @@ services:
       LEDGER_URL: http://core-ledger:8001
       CUSTOMER_PORTAL_SECRET: ${CUSTOMER_PORTAL_SECRET:-troque-isto}
       FORCE_HTTPS_COOKIES: ${FORCE_HTTPS_COOKIES:-true}
+      ADMIN_PANEL_PUBLIC_URL: ${ADMIN_PANEL_PUBLIC_URL}
+      SSO_SIGNING_SECRET: ${SSO_SIGNING_SECRET:-troque-isto}
     depends_on:
       - core-ledger
 
