@@ -136,13 +136,20 @@ def require_login():
     return current_customer()
 
 
+AUTO_CONVERT_LABELS = {
+    "auto_convert_to_crypto_brl_leg": "Conversão automática → USDT",
+}
+
+
 def enrich_entry(entry):
     """Anota cada lançamento do extrato com o que o painel precisa pra
     desenhar (rótulo em português, se é entrada ou saída, ícone)."""
     amount = entry["amount_cents"]
     rail = entry.get("rail", "internal_transfer")
+    meta = entry.get("metadata") or {}
+    kind = meta.get("kind")
     entry["is_credit"] = amount > 0
-    entry["rail_label"] = RAIL_LABELS.get(rail, rail.title())
+    entry["rail_label"] = AUTO_CONVERT_LABELS.get(kind) or RAIL_LABELS.get(rail, rail.title())
     entry["amount_display"] = format_currency(abs(amount))
     return entry
 
@@ -167,6 +174,37 @@ def mask_document(document):
         else:
             out.append(ch)
     return "".join(reversed(out))
+
+
+def _validate_cpf(digits: str) -> bool:
+    """Valida CPF pelo algoritmo oficial (dígitos verificadores), não só o
+    tamanho -- barra na hora erros de digitação no cadastro, em vez de
+    deixar um CPF inválido virar conta e só dar problema depois (login,
+    saque, comprovante)."""
+    if len(digits) != 11 or digits == digits[0] * 11:
+        return False
+    for i in (9, 10):
+        total = sum(int(digits[n]) * ((i + 1) - n) for n in range(i))
+        check = ((total * 10) % 11) % 10
+        if check != int(digits[i]):
+            return False
+    return True
+
+
+def _validate_cnpj(digits: str) -> bool:
+    """Valida CNPJ pelo algoritmo oficial (dígitos verificadores)."""
+    if len(digits) != 14 or digits == digits[0] * 14:
+        return False
+
+    def _check_digit(partial: str) -> str:
+        weights = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] if len(partial) == 13 else [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+        total = sum(int(d) * w for d, w in zip(partial, weights))
+        remainder = total % 11
+        return "0" if remainder < 2 else str(11 - remainder)
+
+    d1 = _check_digit(digits[:12])
+    d2 = _check_digit(digits[:12] + d1)
+    return digits[-2:] == d1 + d2
 
 
 STATUS_LABELS = {
@@ -227,6 +265,78 @@ def login_submit():
 def logout():
     session.clear()
     return redirect(url_for("login_form"))
+
+
+# --- Cadastro (auto-atendimento): pessoa física (CPF) ou empresa (CNPJ) ----
+
+@app.get("/cadastro")
+def register_form():
+    if session.get("customer_id"):
+        return redirect(url_for("dashboard"))
+    return render_template("register.html")
+
+
+@app.post("/cadastro")
+def register_submit():
+    if session.get("customer_id"):
+        return redirect(url_for("dashboard"))
+
+    account_type = request.form.get("account_type", "cpf")
+    name = request.form.get("name", "").strip()
+    document_digits = "".join(c for c in request.form.get("document", "") if c.isdigit())
+    email = request.form.get("email", "").strip()
+    password = request.form.get("password", "")
+    password_confirm = request.form.get("password_confirm", "")
+
+    if not name:
+        flash("Informe seu nome completo (ou razão social, se for empresa).", "error")
+        return redirect(url_for("register_form"))
+
+    if account_type == "cnpj":
+        if not _validate_cnpj(document_digits):
+            flash("CNPJ inválido. Confira os números digitados.", "error")
+            return redirect(url_for("register_form"))
+    else:
+        if not _validate_cpf(document_digits):
+            flash("CPF inválido. Confira os números digitados.", "error")
+            return redirect(url_for("register_form"))
+
+    if not email or "@" not in email:
+        flash("Informe um e-mail válido.", "error")
+        return redirect(url_for("register_form"))
+
+    if len(password) < 8 or not password_confirm:
+        flash("A senha precisa ter pelo menos 8 caracteres, com letras e números.", "error")
+        return redirect(url_for("register_form"))
+    if password != password_confirm:
+        flash("As senhas não conferem.", "error")
+        return redirect(url_for("register_form"))
+
+    r = requests.post(f"{LEDGER_URL}/customers", json={
+        "name": name,
+        "document": document_digits,
+        "email": email,
+        "password": password,
+        "kind": "merchant" if account_type == "cnpj" else "customer",
+    }, timeout=10)
+
+    if r.status_code == 409:
+        flash("Já existe uma conta com esse CPF/CNPJ ou e-mail. Tente entrar ou recuperar sua senha.", "error")
+        return redirect(url_for("register_form"))
+    if r.status_code == 400:
+        error_msg = (r.json() or {}).get("error") or "Não foi possível concluir o cadastro. Confira os dados."
+        flash(error_msg, "error")
+        return redirect(url_for("register_form"))
+    if r.status_code not in (200, 201):
+        flash("Não foi possível concluir o cadastro. Tente novamente em instantes.", "error")
+        return redirect(url_for("register_form"))
+
+    customer = r.json()
+    session.clear()
+    session["customer_id"] = customer["id"]
+    session.permanent = True
+    flash("Conta criada! Bem-vindo à Divisions Pay.", "success")
+    return redirect(url_for("dashboard"))
 
 
 # --- Esqueci minha senha: código por e-mail, em 3 telas ---------------------
@@ -531,3 +641,41 @@ def profile():
     if not customer:
         return redirect(url_for("login_form"))
     return render_template("profile.html", customer=customer, balance_display=format_currency(customer["account"]["balance_cents"]))
+
+
+# --- Carteira cripto: saldo em USDT + opção de conversão automática -------
+
+def _usdt_display(crypto_account):
+    cents = crypto_account["balance_cents"] if crypto_account else 0
+    return f"{cents / 100:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+@app.get("/cripto")
+def crypto_wallet():
+    customer = require_login()
+    if not customer:
+        return redirect(url_for("login_form"))
+    return render_template(
+        "crypto_wallet.html",
+        customer=customer,
+        balance_display=format_currency(customer["account"]["balance_cents"]),
+        usdt_display=_usdt_display(customer.get("crypto_account")),
+        auto_convert=bool(customer.get("auto_convert_to_crypto")),
+    )
+
+
+@app.post("/cripto/auto-convert")
+def crypto_wallet_toggle():
+    customer = require_login()
+    if not customer:
+        return redirect(url_for("login_form"))
+    enabled = request.form.get("enabled") == "1"
+    r = requests.put(
+        f"{LEDGER_URL}/customers/{customer['id']}/auto-convert-crypto",
+        json={"enabled": enabled}, timeout=10,
+    )
+    if r.status_code != 200:
+        flash("Não foi possível salvar essa preferência agora. Tente de novo.", "error")
+    else:
+        flash("Conversão automática PIX/cartão → USDT ativada." if enabled else "Conversão automática desativada.", "success")
+    return redirect(url_for("crypto_wallet"))

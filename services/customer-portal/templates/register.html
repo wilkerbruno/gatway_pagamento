@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Criar conta — Divisions Pay{% endblock %}
+{% block content %}
+<div style="padding: 8px 0 20px;">
+  <div style="text-align:center; margin-bottom: 28px;">
+    <div style="width:60px;height:60px;border-radius:18px;background:#000;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;overflow:hidden;box-shadow: var(--shadow-card);">
+      <img src="{{ url_for('static', filename='logo.jpg') }}" alt="Divisions Pay" style="width:100%;height:100%;object-fit:cover;display:block;">
+    </div>
+    <div style="font-size:20px;font-weight:800;letter-spacing:-0.02em;">Criar conta</div>
+    <div style="color:var(--text-dim);font-size:14px;margin-top:4px;">Sua carteira digital Divisions Pay</div>
+  </div>
+
+  <form method="post" action="{{ url_for('register_submit') }}" class="card">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label>Tipo de conta</label>
+    <div class="account-type-toggle">
+      <label class="type-option active" id="opt-cpf">
+        <input type="radio" name="account_type" value="cpf" checked onchange="setAccountType('cpf')">
+        Pessoa física (CPF)
+      </label>
+      <label class="type-option" id="opt-cnpj">
+        <input type="radio" name="account_type" value="cnpj" onchange="setAccountType('cnpj')">
+        Empresa (CNPJ)
+      </label>
+    </div>
+
+    <label id="label-name">Nome completo</label>
+    <input type="text" name="name" id="input-name" placeholder="Seu nome completo" required autofocus>
+
+    <label id="label-document">CPF</label>
+    <input type="text" name="document" id="input-document" placeholder="000.000.000-00" required inputmode="numeric">
+
+    <label>E-mail</label>
+    <input type="email" name="email" placeholder="voce@email.com" required>
+
+    <label>Senha</label>
+    <input type="password" name="password" placeholder="Mínimo 8 caracteres, com letras e números" required minlength="8">
+
+    <label>Confirmar senha</label>
+    <input type="password" name="password_confirm" placeholder="••••••••" required minlength="8">
+
+    <button type="submit" class="btn">Criar conta</button>
+  </form>
+
+  <div style="text-align:center; color:var(--text-dim); font-size:13px; margin-top:20px;">
+    Já tem conta? <a href="{{ url_for('login_form') }}" style="color:var(--brand); text-decoration:none; font-weight:600;">Entrar</a>
+  </div>
+</div>
+
+<style>
+  .account-type-toggle{ display:flex; gap:8px; margin-bottom:16px; }
+  .type-option{
+    flex:1; display:flex; align-items:center; justify-content:center; text-align:center;
+    padding:12px 8px; border-radius: var(--radius-sm); border:1px solid var(--border);
+    background: var(--surface-2); font-size:13px; font-weight:600; color:var(--text-dim);
+    cursor:pointer; transition: border-color .12s ease, color .12s ease, background-color .12s ease;
+  }
+  .type-option input{ display:none; }
+  .type-option.active{ border-color: var(--brand); color: var(--brand); background: var(--brand-glow); }
+</style>
+
+<script>
+  function setAccountType(type){
+    document.getElementById('opt-cpf').classList.toggle('active', type === 'cpf');
+    document.getElementById('opt-cnpj').classList.toggle('active', type === 'cnpj');
+    const nameLabel = document.getElementById('label-name');
+    const nameInput = document.getElementById('input-name');
+    const docLabel = document.getElementById('label-document');
+    const docInput = document.getElementById('input-document');
+    if (type === 'cnpj'){
+      nameLabel.textContent = 'Razão social';
+      nameInput.placeholder = 'Nome da empresa';
+      docLabel.textContent = 'CNPJ';
+      docInput.placeholder = '00.000.000/0000-00';
+      docInput.maxLength = 18;
+    } else {
+      nameLabel.textContent = 'Nome completo';
+      nameInput.placeholder = 'Seu nome completo';
+      docLabel.textContent = 'CPF';
+      docInput.placeholder = '000.000.000-00';
+      docInput.maxLength = 14;
+    }
+  }
+</script>
+{% endblock %}

@@ -28,6 +28,7 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_FROM: ${SMTP_FROM}
       SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      USDT_BRL_RATE: ${USDT_BRL_RATE:-5.50}
     depends_on:
       mysql:
         condition: service_healthy

@@ -23,7 +23,9 @@
 
   <div style="text-align:center; color:var(--text-dim); font-size:13px; margin-top:20px;">
     <a href="{{ url_for('forgot_password_form') }}" style="color:var(--brand); text-decoration:none; font-weight:600;">Esqueci minha senha</a><br>
-    <span style="margin-top:6px; display:inline-block;">Ainda não tem acesso? Fale com quem administra sua conta.</span>
+    <span style="margin-top:10px; display:inline-block;">Ainda não tem conta?
+      <a href="{{ url_for('register_form') }}" style="color:var(--brand); text-decoration:none; font-weight:600;">Criar conta</a>
+    </span>
   </div>
 </div>
 {% endblock %}

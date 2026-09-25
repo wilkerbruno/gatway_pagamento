@@ -146,7 +146,18 @@ class Customer(db.Model):
     password_hash = db.Column(db.String(255), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
 
-    account = db.relationship("Account")
+    # Carteira cripto interna (opcional): quando o cliente liga a conversão
+    # automática, todo PIX/cartão recebido também credita, na hora, um saldo
+    # em USDT nessa conta separada (currency="USDT"), a uma cotação fixa
+    # configurável (ver USDT_BRL_RATE em routes.py). É um saldo contábil
+    # interno da Divisions Pay -- não é uma compra real em corretora nem um
+    # envio on-chain; nullable porque só é criada na primeira vez que o
+    # cliente liga a conversão (auto_convert_to_crypto), não no cadastro.
+    auto_convert_to_crypto = db.Column(db.Boolean, nullable=True, default=False)
+    crypto_account_id = db.Column(db.String(UUID_LEN), db.ForeignKey("accounts.id"), nullable=True)
+
+    account = db.relationship("Account", foreign_keys=[account_id])
+    crypto_account = db.relationship("Account", foreign_keys=[crypto_account_id])
 
     def to_dict(self):
         return {
@@ -156,6 +167,8 @@ class Customer(db.Model):
             "email": self.email,
             "has_login": self.password_hash is not None,
             "account": self.account.to_dict(),
+            "auto_convert_to_crypto": bool(self.auto_convert_to_crypto),
+            "crypto_account": self.crypto_account.to_dict() if self.crypto_account else None,
         }
 
 

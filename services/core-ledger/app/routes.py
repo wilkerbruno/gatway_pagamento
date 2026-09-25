@@ -1,9 +1,12 @@
 import datetime as _dt
 import hashlib
 import logging
+import os
 import secrets
+from decimal import Decimal
 
 from flask import Blueprint, request, jsonify
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -189,6 +192,131 @@ def create_transaction():
     return jsonify(txn.to_dict()), 201
 
 
+def _settle_txn(txn):
+    """Aplica o efeito de uma transação pendente nos saldos das contas
+    (parte pura, sem decidir status HTTP -- usada tanto pela rota de settle
+    quanto pela conversão automática pra cripto abaixo). Retorna None se
+    aplicou com sucesso, ou um dict de erro (nada é alterado) se algum
+    saldo ficaria negativo sem permissão."""
+    accounts = {e.account_id: Account.query.get(e.account_id) for e in txn.entries}
+    for entry in txn.entries:
+        acc = accounts[entry.account_id]
+        projected = acc.balance_cents + entry.amount_cents
+        if projected < 0 and not acc.allow_negative:
+            return {
+                "error": "settle recusado: deixaria a conta com saldo negativo",
+                "account_id": acc.id,
+                "balance_cents": acc.balance_cents,
+            }
+
+    for entry in txn.entries:
+        accounts[entry.account_id].balance_cents += entry.amount_cents
+
+    txn.status = EntryStatus.CONFIRMED
+    db.session.add(WebhookEvent(transaction_id=txn.id, event_type="transaction.confirmed"))
+    return None
+
+
+# Cotação BRL->USDT usada só pela conversão automática (carteira cripto
+# interna) abaixo -- mesmo esquema de placeholder fixo do crypto-service
+# (ASSET_BRL_RATE em services/crypto-service/app.py). Troque por uma
+# cotação em tempo real antes de operar com volume real.
+USDT_BRL_RATE = Decimal(os.environ.get("USDT_BRL_RATE", "5.50"))
+
+
+def _get_or_create_crypto_account(customer) -> str:
+    if customer.crypto_account_id:
+        return customer.crypto_account_id
+    acc = Account(
+        owner_ref=f"{customer.document or customer.name}:usdt-wallet",
+        kind="customer",
+        currency="USDT",
+        allow_negative=False,
+    )
+    db.session.add(acc)
+    db.session.flush()
+    customer.crypto_account_id = acc.id
+    db.session.add(customer)
+    return acc.id
+
+
+def _maybe_auto_convert_to_crypto(source_txn):
+    """Depois de liquidar um PIX/cartão recebido, confere se a conta
+    creditada é de um cliente com a conversão automática pra cripto ligada
+    (Customer.auto_convert_to_crypto) -- se for, converte o valor na hora
+    pro saldo interno de USDT dele, em duas transações separadas (uma só em
+    BRL, outra só em USDT, cada uma batendo em zero -- mantém a partida
+    dobrada por moeda). Isso é uma carteira cripto interna/contábil da
+    Divisions Pay, não uma compra real em corretora nem um envio on-chain;
+    pra virar USDT de verdade numa wallet externa ainda depende do fluxo
+    manual do crypto-service, igual o saque PIX hoje."""
+    if source_txn.rail not in ("pix", "card"):
+        return
+
+    for entry in source_txn.entries:
+        if entry.amount_cents <= 0:
+            continue
+        customer = Customer.query.filter_by(account_id=entry.account_id).first()
+        if not customer or not customer.auto_convert_to_crypto:
+            continue
+
+        brl_cents = entry.amount_cents
+        idem_brl = f"autoconvert:{source_txn.id}:{customer.id}:brl"
+        if Transaction.query.filter_by(idempotency_key=idem_brl).first():
+            continue  # já convertido (ex: settle chamado de novo)
+
+        usdt_cents = int((Decimal(brl_cents) / USDT_BRL_RATE).quantize(Decimal("1")))
+        if usdt_cents <= 0:
+            continue
+
+        crypto_pool_brl_id = _auto_get_or_create_system_account("system:crypto_conversion_pool_brl")
+        crypto_pool_usdt_id = _auto_get_or_create_system_account("system:crypto_conversion_pool_usdt")
+        crypto_account_id = _get_or_create_crypto_account(customer)
+        db.session.commit()
+
+        brl_leg = Transaction(
+            idempotency_key=idem_brl,
+            rail="internal_transfer",
+            status=EntryStatus.PENDING,
+            metadata_json={
+                "kind": "auto_convert_to_crypto_brl_leg",
+                "source_transaction_id": source_txn.id,
+                "customer_id": customer.id,
+            },
+        )
+        db.session.add(brl_leg)
+        db.session.flush()
+        db.session.add(LedgerEntry(transaction_id=brl_leg.id, account_id=customer.account_id, amount_cents=-brl_cents))
+        db.session.add(LedgerEntry(transaction_id=brl_leg.id, account_id=crypto_pool_brl_id, amount_cents=brl_cents))
+        db.session.commit()
+        if _settle_txn(brl_leg):
+            db.session.rollback()
+            continue
+        db.session.commit()
+
+        usdt_leg = Transaction(
+            idempotency_key=f"autoconvert:{source_txn.id}:{customer.id}:usdt",
+            rail="internal_transfer",
+            status=EntryStatus.PENDING,
+            metadata_json={
+                "kind": "auto_convert_to_crypto_usdt_leg",
+                "source_transaction_id": source_txn.id,
+                "customer_id": customer.id,
+                "rate_used_brl_per_usdt": str(USDT_BRL_RATE),
+                "brl_cents": brl_cents,
+            },
+        )
+        db.session.add(usdt_leg)
+        db.session.flush()
+        db.session.add(LedgerEntry(transaction_id=usdt_leg.id, account_id=crypto_pool_usdt_id, amount_cents=-usdt_cents))
+        db.session.add(LedgerEntry(transaction_id=usdt_leg.id, account_id=crypto_account_id, amount_cents=usdt_cents))
+        db.session.commit()
+        if _settle_txn(usdt_leg):
+            db.session.rollback()
+            continue
+        db.session.commit()
+
+
 @bp.post("/transactions/<transaction_id>/settle")
 def settle_transaction(transaction_id):
     """Confirma uma transação pendente e aplica o efeito nos saldos das contas.
@@ -201,23 +329,13 @@ def settle_transaction(transaction_id):
     if txn.status != EntryStatus.PENDING:
         return jsonify({"error": f"cannot settle transaction in status {txn.status.value}"}), 409
 
-    accounts = {e.account_id: Account.query.get(e.account_id) for e in txn.entries}
-    for entry in txn.entries:
-        acc = accounts[entry.account_id]
-        projected = acc.balance_cents + entry.amount_cents
-        if projected < 0 and not acc.allow_negative:
-            return jsonify({
-                "error": "settle recusado: deixaria a conta com saldo negativo",
-                "account_id": acc.id,
-                "balance_cents": acc.balance_cents,
-            }), 409
-
-    for entry in txn.entries:
-        accounts[entry.account_id].balance_cents += entry.amount_cents
-
-    txn.status = EntryStatus.CONFIRMED
-    db.session.add(WebhookEvent(transaction_id=txn.id, event_type="transaction.confirmed"))
+    error = _settle_txn(txn)
+    if error:
+        db.session.rollback()
+        return jsonify(error), 409
     db.session.commit()
+
+    _maybe_auto_convert_to_crypto(txn)
 
     return jsonify(txn.to_dict())
 
@@ -327,8 +445,19 @@ def create_customer():
     "password" é opcional — só preencha se esse cliente vai ter acesso ao
     portal próprio (customer-portal)."""
     data = request.get_json(force=True)
+
+    document = (data.get("document") or "").strip() or None
+    email = (data.get("email") or "").strip() or None
+    dup_conditions = []
+    if document:
+        dup_conditions.append(Customer.document == document)
+    if email:
+        dup_conditions.append(Customer.email == email)
+    if dup_conditions and Customer.query.filter(or_(*dup_conditions)).first():
+        return jsonify({"error": "já existe um cliente com esse documento ou e-mail"}), 409
+
     acc = Account(
-        owner_ref=data.get("document") or data["name"],
+        owner_ref=document or data["name"],
         kind=data.get("kind", "customer"),
         currency=data.get("currency", "BRL"),
         allow_negative=False,
@@ -344,8 +473,8 @@ def create_customer():
     customer = Customer(
         account_id=acc.id,
         name=data["name"],
-        document=data.get("document"),
-        email=data.get("email"),
+        document=document,
+        email=email,
         password_hash=generate_password_hash(password) if password else None,
     )
     db.session.add(customer)
@@ -421,6 +550,19 @@ def set_customer_password(customer_id):
         return jsonify({"error": weak}), 400
     customer.password_hash = generate_password_hash(password)
     _log_audit("customer.password_changed", actor=customer.id)
+    db.session.commit()
+    return jsonify(customer.to_dict())
+
+
+@bp.put("/customers/<customer_id>/auto-convert-crypto")
+def set_auto_convert_crypto(customer_id):
+    """Liga/desliga a conversão automática de PIX/cartão recebido pro saldo
+    interno de USDT (carteira cripto). O cliente escolhe isso na tela
+    "Carteira cripto" do customer-portal."""
+    customer = Customer.query.get_or_404(customer_id)
+    data = request.get_json(force=True)
+    customer.auto_convert_to_crypto = bool(data.get("enabled"))
+    _log_audit("customer.auto_convert_crypto_changed", actor=customer.id, detail={"enabled": customer.auto_convert_to_crypto})
     db.session.commit()
     return jsonify(customer.to_dict())
 
@@ -718,6 +860,8 @@ SYSTEM_ACCOUNT_LABELS = {
     "system:crypto_pending": "Rede cripto (on-chain)",
     "system:payouts_pending": "Saque PIX (banco de destino)",
     "system:fees": "Divisions Pay (taxas)",
+    "system:crypto_conversion_pool_brl": "Conversão automática para cripto",
+    "system:crypto_conversion_pool_usdt": "Conversão automática para cripto",
 }
 
 
