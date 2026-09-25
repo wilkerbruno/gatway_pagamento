@@ -124,6 +124,42 @@ class MercadoPagoPixProvider(PixProvider):
         computed = hmac.new(self.webhook_secret.encode(), manifest.encode(), hashlib.sha256).hexdigest()
         return hmac.compare_digest(computed, v1)
 
+    @staticmethod
+    def _extract_payer_info(payment: dict) -> dict | None:
+        """Melhor esforço pra puxar quem pagou um PIX, a partir do que o
+        Mercado Pago devolve no pagamento (nome/documento/banco do pagador
+        -- quando ele disponibiliza; nem sempre disponibiliza tudo).
+        Confira contra a documentação atual do Mercado Pago antes de confiar
+        cegamente nisso -- o formato de "point_of_interaction.transaction_data
+        .bank_info" é o observado no momento em que este código foi escrito
+        e pode mudar. Nunca inventa nada: só usa o que o provedor realmente
+        devolveu, e se não vier nada útil, devolve None (o comprovante então
+        mostra só "processado via mercadopago", sem fingir saber mais)."""
+        if not payment:
+            return None
+        bank_info = (
+            payment.get("point_of_interaction", {})
+            .get("transaction_data", {})
+            .get("bank_info", {})
+        )
+        payer_bank = bank_info.get("payer") or {}
+        identification = (payment.get("payer") or {}).get("identification") or {}
+
+        name = payer_bank.get("long_name") or payer_bank.get("account_holder_name")
+        document = identification.get("number")
+        bank_name = payer_bank.get("bank_name") or payer_bank.get("long_name")
+
+        if not (name or document):
+            return None
+        info = {}
+        if name:
+            info["name"] = name
+        if document:
+            info["document"] = document
+        if bank_name and bank_name != name:
+            info["bank"] = bank_name
+        return info or None
+
     def _query_order_status(self, order_id: str) -> dict:
         """Consulta autoritativa direto no Mercado Pago (GET /v1/orders/{id}).
         Usada tanto pelo webhook (depois de verificado) quanto pela
@@ -136,12 +172,17 @@ class MercadoPagoPixProvider(PixProvider):
         resp.raise_for_status()
         data = resp.json()
         payments = data.get("transactions", {}).get("payments", [{}])
-        raw_status = (payments[0].get("status") if payments else None) or data.get("status", "pending")
+        payment = payments[0] if payments else {}
+        raw_status = payment.get("status") or data.get("status", "pending")
         status_map = {"approved": "confirmed", "processed": "confirmed", "rejected": "failed", "cancelled": "failed"}
-        return {
+        result = {
             "provider_ref": data.get("id"),
             "status": status_map.get(raw_status, "pending"),
         }
+        payer_info = self._extract_payer_info(payment)
+        if payer_info:
+            result["payer_info"] = payer_info
+        return result
 
     def check_status(self, provider_ref: str) -> dict:
         return self._query_order_status(provider_ref)

@@ -234,12 +234,6 @@ def fail_transaction(transaction_id):
     return jsonify(txn.to_dict())
 
 
-@bp.get("/transactions/<transaction_id>")
-def get_transaction(transaction_id):
-    txn = Transaction.query.get_or_404(transaction_id)
-    return jsonify(txn.to_dict())
-
-
 # --- Admin: seleção de provedor por trilho de pagamento -------------------
 
 from .models import ProviderSetting
@@ -747,13 +741,14 @@ def _party_for_account(account_id):
 
 
 @bp.get("/transactions/<transaction_id>")
-def get_transaction_detail(transaction_id):
-    """Detalhe completo de uma transação pra montar um comprovante:
-    quem enviou, quem recebeu, e os metadados relevantes (chave PIX de
-    destino num saque, provedor usado numa cobrança, etc). Não faz
-    controle de acesso aqui -- quem chama (customer-portal/admin-panel)
-    é responsável por confirmar que o cliente logado participa dessa
-    transação antes de mostrar o resultado."""
+def get_transaction(transaction_id):
+    """Detalhe completo de uma transação -- usado tanto pelo pix-service
+    (reconciliação/checagem de status) quanto pelo comprovante do
+    customer-portal. Cada lançamento vem com "party": quem enviou/recebeu
+    (Customer/lojista de verdade, com nome + documento) ou uma conta de
+    sistema (rotulada de forma amigável, sem expor o owner_ref cru). Não faz
+    controle de acesso aqui -- quem chama é responsável por confirmar que o
+    cliente logado participa dessa transação antes de mostrar o resultado."""
     txn = Transaction.query.get_or_404(transaction_id)
     entries = []
     for e in txn.entries:
@@ -773,6 +768,22 @@ def get_transaction_detail(transaction_id):
         "created_at": txn.created_at.isoformat(),
         "entries": entries,
     })
+
+
+@bp.patch("/transactions/<transaction_id>/metadata")
+def patch_transaction_metadata(transaction_id):
+    """Mescla campos extras no metadata_json de uma transação (nunca apaga
+    o que já existe). Existe pra permitir enriquecer uma cobrança depois
+    que ela já foi criada -- por exemplo, o pix-service adicionando os
+    dados bancários do pagador assim que o provedor os disponibiliza,
+    tipicamente só depois que o pagamento é confirmado."""
+    txn = Transaction.query.get_or_404(transaction_id)
+    patch = request.get_json(force=True) or {}
+    merged = dict(txn.metadata_json or {})
+    merged.update(patch)
+    txn.metadata_json = merged
+    db.session.commit()
+    return jsonify(txn.to_dict())
 
 
 @bp.post("/transfers")

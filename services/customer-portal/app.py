@@ -378,14 +378,26 @@ def transaction_receipt(transaction_id):
     amount_cents = credit["amount_cents"] if credit else abs(debit["amount_cents"]) if debit else 0
 
     destination_note = None
+    meta = txn.get("metadata") or {}
     if txn["rail"] == "withdrawal_pix":
-        meta = txn.get("metadata") or {}
         key_type = PIX_KEY_TYPES.get(meta.get("pix_key_type"), meta.get("pix_key_type"))
         if meta.get("pix_key"):
             destination_note = f"Chave PIX ({key_type}): {meta['pix_key']}"
     elif txn["rail"] in ("pix", "card", "crypto"):
-        provider = (txn.get("metadata") or {}).get("provider")
-        if provider:
+        payer_info = meta.get("payer_info")
+        if payer_info and debit:
+            # O provedor confirmou quem pagou -- troca o rótulo genérico da
+            # conta de sistema ("Mercado Pago (PIX)") pelo pagador de
+            # verdade, com o banco dele como nota extra (quando disponível).
+            debit["party"] = {
+                "kind": "external",
+                "name": payer_info.get("name") or debit["party"]["name"],
+                "document": payer_info.get("document"),
+            }
+            if payer_info.get("bank"):
+                destination_note = f"Banco do pagador: {payer_info['bank']}"
+        provider = meta.get("provider")
+        if provider and not destination_note:
             destination_note = f"Processado via {provider}"
 
     return render_template(

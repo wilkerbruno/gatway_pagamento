@@ -50,6 +50,24 @@ def system_pix_pending_account() -> str:
     return _system_account_cache["pix_pending_account_id"]
 
 
+def _save_payer_info(transaction_id: str, payer_info: dict | None) -> None:
+    """Guarda os dados de quem pagou (nome/documento/banco, quando o
+    provedor os devolve) no metadata da transação, pro comprovante do
+    cliente conseguir mostrar. Melhor esforço: se isso falhar, não derruba
+    a confirmação do pagamento -- o dinheiro já entrou, o comprovante só
+    fica sem esse detalhe extra."""
+    if not payer_info:
+        return
+    try:
+        requests.patch(
+            f"{LEDGER_URL}/transactions/{transaction_id}/metadata",
+            json={"payer_info": payer_info},
+            timeout=10,
+        )
+    except requests.RequestException:
+        app.logger.warning("não foi possível salvar payer_info da transação %s", transaction_id)
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "active_provider": active_provider_name()}
@@ -119,6 +137,7 @@ def provider_webhook(provider_name):
         return jsonify({"error": "transação não encontrada para este provider_ref"}), 404
 
     txn = txn_resp.json()
+    _save_payer_info(txn['id'], result.get("payer_info"))
     settle = requests.post(f"{LEDGER_URL}/transactions/{txn['id']}/settle", timeout=10)
     settle.raise_for_status()
     return jsonify(settle.json())
@@ -155,6 +174,7 @@ def check_charge_status(transaction_id):
         return jsonify({"error": f"falha ao consultar o provedor {provider_name}: {exc}"}), 502
 
     if result["status"] == "confirmed":
+        _save_payer_info(transaction_id, result.get("payer_info"))
         settle = requests.post(f"{LEDGER_URL}/transactions/{transaction_id}/settle", timeout=10)
         settle.raise_for_status()
         return jsonify({"status": "confirmed", "transaction": settle.json()})
