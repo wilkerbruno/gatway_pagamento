@@ -6,6 +6,20 @@
 <div style="font-size:13px;color:var(--text-dim);margin-bottom:2px;">Olá,</div>
 <div style="font-size:20px;font-weight:700;margin-bottom:18px;">{{ customer.name.split(' ')[0] }}</div>
 
+{% if customer.verification_status != 'approved' %}
+<a href="{{ url_for('verification_form') }}" class="card" style="display:flex; align-items:center; gap:12px; text-decoration:none; color:inherit; margin-bottom:14px; border-color: rgba(255,183,77,0.35); background: rgba(255,183,77,0.08);">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style="flex:none; color:#ffb74d;"><path d="M12 9v4M12 16.5h.01M10.3 3.9L2.9 17a2 2 0 001.8 3h14.6a2 2 0 001.8-3L13.7 3.9a2 2 0 00-3.4 0z" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <div>
+    <div style="font-weight:700; font-size:13.5px;">
+      {% if customer.verification_status == 'rejected' %}Verificação reprovada — reenvie seus documentos
+      {% elif customer.verification_status == 'pending_review' %}Documentos em análise
+      {% elif customer.verification_status == 'facial_pending' %}Falta a verificação facial
+      {% else %}Verifique sua identidade pra liberar saques{% endif %}
+    </div>
+    <div style="font-size:12px; color:var(--text-dim); margin-top:2px;">Toque para continuar</div>
+  </div>
+</a>
+{% endif %}
 <div class="card" style="background: linear-gradient(135deg, #17c3a0 0%, #0a8f76 100%); border:none; position:relative; overflow:hidden;">
   <div style="position:absolute; top:-40px; right:-40px; width:140px; height:140px; border-radius:50%; background:rgba(255,255,255,0.08);"></div>
   <div style="display:flex;justify-content:space-between;align-items:center;">

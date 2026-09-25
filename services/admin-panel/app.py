@@ -463,3 +463,85 @@ def withdrawal_mark_failed(withdrawal_id):
     else:
         flash("Saque marcado como falho -- o valor voltou pro saldo do cliente.", "success")
     return redirect(url_for("withdrawals_list"))
+
+
+# --- Verificação de identidade (KYC): documentos + selfie por link -------
+
+VERIFICATION_STATUS_LABELS = {
+    "documents_pending": "Aguardando documentos",
+    "facial_pending": "Aguardando selfie",
+    "pending_review": "Pronto pra revisão",
+    "approved": "Aprovado",
+    "rejected": "Reprovado",
+}
+
+DOCUMENT_KIND_LABELS = {
+    "id_front": "Documento (frente)",
+    "id_back": "Documento (verso)",
+    "cnpj_card": "Cartão CNPJ",
+    "selfie": "Selfie",
+}
+
+
+@app.get("/verificacoes")
+@require_auth
+def verifications_list():
+    status = request.args.get("status", "pending_review")
+    try:
+        params = {} if status == "all" else {"status": status}
+        customers = api_get(LEDGER_URL, "/customers/verifications", params=params)
+    except requests.RequestException as e:
+        flash(f"Não consegui falar com o core-ledger: {e}", "error")
+        customers = []
+    return render_template(
+        "verifications.html",
+        customers=customers,
+        status=status,
+        status_labels=VERIFICATION_STATUS_LABELS,
+    )
+
+
+@app.get("/verificacoes/<customer_id>")
+@require_auth
+def verification_detail(customer_id):
+    try:
+        data = api_get(LEDGER_URL, f"/customers/{customer_id}/verification")
+    except requests.RequestException as e:
+        flash(f"Não consegui falar com o core-ledger: {e}", "error")
+        return redirect(url_for("verifications_list"))
+    return render_template(
+        "verification_detail.html",
+        customer=data["customer"],
+        documents=data["documents"],
+        required_kinds=data["required_kinds"],
+        status_labels=VERIFICATION_STATUS_LABELS,
+        doc_kind_labels=DOCUMENT_KIND_LABELS,
+    )
+
+
+@app.get("/verificacoes/documentos/<document_id>")
+@require_auth
+def verification_document_file(document_id):
+    """Proxy do arquivo (imagem/PDF) que fica guardado no core-ledger --
+    só o admin logado aqui consegue ver, o core-ledger em si não expõe
+    isso pra internet."""
+    r = requests.get(f"{LEDGER_URL}/verification-documents/{document_id}/file", timeout=15)
+    if r.status_code != 200:
+        abort(404)
+    return Response(r.content, mimetype=r.headers.get("Content-Type", "application/octet-stream"))
+
+
+@app.post("/verificacoes/<customer_id>/revisar")
+@require_auth
+def verification_review_submit(customer_id):
+    decision = request.form.get("decision")
+    note = request.form.get("note", "").strip() or None
+    resp = api_put(LEDGER_URL, f"/customers/{customer_id}/verification/review", json={
+        "decision": decision,
+        "note": note,
+    })
+    if resp.status_code >= 400:
+        flash(f"Erro ao registrar a decisão: {error_message(resp)}", "error")
+    else:
+        flash("Aprovado!" if decision == "approved" else "Reprovado." if decision == "rejected" else "Reaberto.", "success")
+    return redirect(url_for("verifications_list"))

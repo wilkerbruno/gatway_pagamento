@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Verificações{% endblock %}
+{% block content %}
+<h1>Verificação de identidade</h1>
+<p class="mono" style="margin-top:-12px;">
+  Fila de clientes que enviaram documento + selfie e estão esperando revisão. Confira se a selfie bate com a
+  foto do documento antes de aprovar.
+</p>
+
+<div class="actions">
+  <a href="{{ url_for('verifications_list', status='pending_review') }}" class="btn small {{ 'secondary' if status != 'pending_review' }}">Pronto pra revisão</a>
+  <a href="{{ url_for('verifications_list', status='documents_pending') }}" class="btn small {{ 'secondary' if status != 'documents_pending' }}">Aguardando documentos</a>
+  <a href="{{ url_for('verifications_list', status='facial_pending') }}" class="btn small {{ 'secondary' if status != 'facial_pending' }}">Aguardando selfie</a>
+  <a href="{{ url_for('verifications_list', status='approved') }}" class="btn small {{ 'secondary' if status != 'approved' }}">Aprovados</a>
+  <a href="{{ url_for('verifications_list', status='rejected') }}" class="btn small {{ 'secondary' if status != 'rejected' }}">Reprovados</a>
+  <a href="{{ url_for('verifications_list', status='all') }}" class="btn small {{ 'secondary' if status != 'all' }}">Todos</a>
+</div>
+
+{% if customers %}
+<table>
+  <tr><th>Cliente</th><th>Documento</th><th>Status</th><th></th></tr>
+  {% for c in customers %}
+  <tr>
+    <td>{{ c.name }}<div class="mono">{{ c.email or '' }}</div></td>
+    <td class="mono">{{ c.document or '—' }}</td>
+    <td><span class="badge {{ 'warn' if c.verification_status in ('documents_pending','facial_pending') else 'muted' if c.verification_status == 'rejected' else '' }}">{{ status_labels.get(c.verification_status, c.verification_status) }}</span></td>
+    <td><a href="{{ url_for('verification_detail', customer_id=c.id) }}" class="btn small secondary">Ver</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="mono">Ninguém nessa fila no momento.</p>
+{% endif %}
+{% endblock %}

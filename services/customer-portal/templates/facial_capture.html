@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Verificação facial — Divisions Pay{% endblock %}
+{% block content %}
+
+<div style="min-height: calc(100vh - 120px); display:flex; flex-direction:column; justify-content:center; text-align:center;">
+
+{% if not valid %}
+  <div class="receipt-status-icon status-failed" style="margin:0 auto 16px;">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </div>
+  <div style="font-size:17px; font-weight:700; margin-bottom:6px;">Não deu pra continuar</div>
+  <div style="font-size:13.5px; color:var(--text-dim);">{{ error }}</div>
+
+{% elif done %}
+  <div class="receipt-status-icon status-confirmed" style="margin:0 auto 16px;">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </div>
+  <div style="font-size:17px; font-weight:700; margin-bottom:6px;">Selfie enviada!</div>
+  <div style="font-size:13.5px; color:var(--text-dim);">Pode fechar essa aba e voltar pro computador — sua verificação já está em análise.</div>
+
+{% else %}
+  <div style="font-size:18px; font-weight:800; margin-bottom:6px;">Olá, {{ customer_name.split(' ')[0] }}</div>
+  <div style="font-size:13.5px; color:var(--text-dim); margin-bottom:24px; line-height:1.5;">
+    Tire uma selfie clara, com boa luz e o rosto todo visível, pra confirmar sua identidade.
+  </div>
+
+  <form method="post" action="{{ url_for('facial_verification_submit', token=token) }}" enctype="multipart/form-data" class="card" style="text-align:left;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Selfie</label>
+    <input type="file" name="file" accept="image/*" capture="user" required>
+    <button type="submit" class="btn">Enviar selfie</button>
+  </form>
+{% endif %}
+
+</div>
+{% endblock %}

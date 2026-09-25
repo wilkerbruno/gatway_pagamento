@@ -5,10 +5,11 @@ import os
 import secrets
 from decimal import Decimal
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_from_directory, abort
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 
 from .mailer import send_email
 from .models import (
@@ -404,7 +405,7 @@ def get_transaction_by_external_ref(external_ref):
 
 # --- Carteiras de cliente: cadastro, saldo, transferência P2P, extrato ----
 
-from .models import Customer
+from .models import Customer, VerificationDocument, FacialVerificationLink
 
 
 @bp.get("/customers")
@@ -563,6 +564,239 @@ def set_auto_convert_crypto(customer_id):
     data = request.get_json(force=True)
     customer.auto_convert_to_crypto = bool(data.get("enabled"))
     _log_audit("customer.auto_convert_crypto_changed", actor=customer.id, detail={"enabled": customer.auto_convert_to_crypto})
+    db.session.commit()
+    return jsonify(customer.to_dict())
+
+
+# --- Verificação de identidade (KYC): documento + selfie por link --------
+#
+# Pessoa física manda RG ou CNH (frente e verso); empresa manda o cartão
+# CNPJ. Depois, os dois tipos passam por uma selfie -- como ainda não tem
+# app mobile, a selfie é tirada pelo NAVEGADOR DO CELULAR, através de um
+# link de uso único que o customer-portal gera e mostra pro cliente (ele
+# abre esse link no celular dele, tira a foto, pronto). O status do
+# cliente (verification_status) anda sozinho conforme os arquivos chegam;
+# só a decisão final (approved/rejected) é humana, feita pelo admin no
+# admin-panel depois de olhar os documentos e a selfie lado a lado.
+#
+# ⚠️ Isso NÃO é reconhecimento facial biométrico automático (comparar a
+# selfie com a foto do documento por algoritmo) -- é captura da selfie +
+# conferência manual por um humano. Comparação biométrica de verdade exige
+# um provedor especializado (ver aviso maior na resposta desta conversa);
+# construir isso do zero, sem um provedor validado, tende a ser tanto
+# inseguro (fácil de enganar com uma foto) quanto impreciso.
+
+UPLOAD_DIR = os.environ.get("VERIFICATION_UPLOAD_DIR", "/app/uploads")
+try:
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+except OSError:
+    # Ambiente sem permissão pra criar o diretório default agora (ex: rodando
+    # testes fora do container) -- tenta de novo, de forma preguiçosa, na
+    # hora do primeiro upload de verdade (_save_upload).
+    pass
+
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8MB por arquivo
+ALLOWED_UPLOAD_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "application/pdf": ".pdf",
+}
+DOCUMENT_KINDS_FOR_CPF = {"id_front", "id_back"}
+DOCUMENT_KINDS_FOR_CNPJ = {"cnpj_card"}
+FACIAL_LINK_TTL_MINUTES = 30
+
+
+def _required_document_kinds(customer) -> set:
+    if customer.account.kind == "merchant":
+        return set(DOCUMENT_KINDS_FOR_CNPJ)
+    return set(DOCUMENT_KINDS_FOR_CPF)
+
+
+def _recompute_verification_status(customer):
+    """Anda o status sozinho conforme os arquivos chegam -- nunca mexe se
+    já for uma decisão humana final (approved/rejected)."""
+    if customer.verification_status in ("approved", "rejected"):
+        return
+    kinds_present = {
+        d.kind for d in VerificationDocument.query.filter_by(customer_id=customer.id).all()
+    }
+    has_required_docs = _required_document_kinds(customer).issubset(kinds_present)
+    has_selfie = "selfie" in kinds_present
+    if has_required_docs and has_selfie:
+        customer.verification_status = "pending_review"
+    elif has_required_docs:
+        customer.verification_status = "facial_pending"
+    else:
+        customer.verification_status = "documents_pending"
+
+
+def _save_upload(file_storage, kind: str, customer_id: str) -> "VerificationDocument":
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    content_type = file_storage.mimetype
+    if content_type not in ALLOWED_UPLOAD_TYPES:
+        raise ValueError(f"tipo de arquivo não permitido: {content_type} (envie jpg, png, webp ou pdf)")
+
+    file_storage.stream.seek(0, os.SEEK_END)
+    size = file_storage.stream.tell()
+    file_storage.stream.seek(0)
+    if size > MAX_UPLOAD_BYTES:
+        raise ValueError("arquivo maior que 8MB")
+    if size == 0:
+        raise ValueError("arquivo vazio")
+
+    ext = ALLOWED_UPLOAD_TYPES[content_type]
+    stored_filename = f"{customer_id}_{kind}_{secrets.token_hex(8)}{ext}"
+    stored_filename = secure_filename(stored_filename)
+    file_storage.save(os.path.join(UPLOAD_DIR, stored_filename))
+
+    doc = VerificationDocument(
+        customer_id=customer_id,
+        kind=kind,
+        stored_filename=stored_filename,
+        content_type=content_type,
+    )
+    db.session.add(doc)
+    return doc
+
+
+@bp.post("/customers/<customer_id>/documents")
+def upload_customer_document(customer_id):
+    """Upload de um documento de identidade (id_front/id_back/cnpj_card),
+    chamado pelo customer-portal (o cliente ainda logado, no navegador
+    onde fez o cadastro)."""
+    customer = Customer.query.get_or_404(customer_id)
+    kind = request.form.get("kind")
+    allowed_kinds = DOCUMENT_KINDS_FOR_CPF | DOCUMENT_KINDS_FOR_CNPJ
+    if kind not in allowed_kinds:
+        return jsonify({"error": f"kind inválido: {kind}"}), 400
+    if "file" not in request.files:
+        return jsonify({"error": "nenhum arquivo enviado"}), 400
+
+    if kind in DOCUMENT_KINDS_FOR_CPF:
+        doc_type = request.form.get("document_type")
+        if doc_type not in ("rg", "cnh"):
+            return jsonify({"error": "document_type deve ser 'rg' ou 'cnh'"}), 400
+        customer.id_document_type = doc_type
+
+    try:
+        doc = _save_upload(request.files["file"], kind, customer.id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    _recompute_verification_status(customer)
+    _log_audit("customer.document_uploaded", actor=customer.id, detail={"kind": kind})
+    db.session.commit()
+    return jsonify({"document": doc.to_dict(), "customer": customer.to_dict()}), 201
+
+
+@bp.get("/customers/<customer_id>/verification")
+def get_customer_verification(customer_id):
+    customer = Customer.query.get_or_404(customer_id)
+    documents = VerificationDocument.query.filter_by(customer_id=customer.id).all()
+    return jsonify({
+        "customer": customer.to_dict(),
+        "required_kinds": sorted(_required_document_kinds(customer)),
+        "documents": [d.to_dict() for d in documents],
+    })
+
+
+@bp.get("/verification-documents/<document_id>/file")
+def get_verification_document_file(document_id):
+    """Serve o arquivo em si. ⚠️ Sem autenticação própria (mesmo modelo de
+    confiança do resto do core-ledger -- ver comentário no topo do
+    arquivo/routes.py sobre não ser exposto direto pra internet): quem
+    expõe isso pro admin logado é o admin-panel, que faz o proxy dessa
+    chamada e é ele quem exige sessão de admin válida."""
+    doc = VerificationDocument.query.get_or_404(document_id)
+    return send_from_directory(UPLOAD_DIR, doc.stored_filename, mimetype=doc.content_type)
+
+
+@bp.post("/customers/<customer_id>/facial-verification-link")
+def create_facial_verification_link(customer_id):
+    """Gera um link de uso único (expira em 30min) pro cliente abrir no
+    celular e tirar a selfie -- o customer-portal monta a URL completa
+    (com o domínio público dele) a partir do token retornado aqui."""
+    customer = Customer.query.get_or_404(customer_id)
+    link = FacialVerificationLink(
+        customer_id=customer.id,
+        token=secrets.token_urlsafe(24),
+        expires_at=utcnow() + _dt.timedelta(minutes=FACIAL_LINK_TTL_MINUTES),
+    )
+    db.session.add(link)
+    _log_audit("customer.facial_link_created", actor=customer.id)
+    db.session.commit()
+    return jsonify({
+        "token": link.token,
+        "expires_at": link.expires_at.isoformat(),
+    }), 201
+
+
+def _resolve_facial_link(token: str) -> "FacialVerificationLink":
+    link = FacialVerificationLink.query.filter_by(token=token).first()
+    if not link:
+        abort(404)
+    if link.used_at is not None:
+        abort(410, description="esse link já foi usado")
+    if _is_expired(link.expires_at):
+        abort(410, description="esse link expirou")
+    return link
+
+
+@bp.get("/facial-verification/<token>")
+def check_facial_verification_link(token):
+    """Chamado pela página que abre no celular, pra confirmar que o link
+    ainda vale antes de mostrar o botão de tirar a foto."""
+    link = _resolve_facial_link(token)
+    customer = Customer.query.get_or_404(link.customer_id)
+    return jsonify({"valid": True, "customer_name": customer.name})
+
+
+@bp.post("/facial-verification/<token>/selfie")
+def submit_facial_verification_selfie(token):
+    """Recebe a selfie tirada no celular. Rota pública de propósito (o
+    celular normalmente não está logado no portal) -- protegida só pelo
+    token, que é de uso único e expira rápido."""
+    link = _resolve_facial_link(token)
+    customer = Customer.query.get_or_404(link.customer_id)
+    if "file" not in request.files:
+        return jsonify({"error": "nenhum arquivo enviado"}), 400
+
+    try:
+        doc = _save_upload(request.files["file"], "selfie", customer.id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    link.used_at = utcnow()
+    _recompute_verification_status(customer)
+    _log_audit("customer.facial_selfie_submitted", actor=customer.id)
+    db.session.commit()
+    return jsonify({"document": doc.to_dict(), "customer": customer.to_dict()}), 201
+
+
+@bp.get("/customers/verifications")
+def list_customer_verifications():
+    """Fila de verificação pro admin: por padrão só quem está pronto pra
+    revisão (documentos + selfie enviados); ?status=all traz todo mundo."""
+    status = request.args.get("status", "pending_review")
+    query = Customer.query
+    if status != "all":
+        query = query.filter(Customer.verification_status == status)
+    customers = query.order_by(Customer.created_at.desc()).limit(200).all()
+    return jsonify([c.to_dict() for c in customers])
+
+
+@bp.put("/customers/<customer_id>/verification/review")
+def review_customer_verification(customer_id):
+    """Decisão humana do admin depois de olhar os documentos + selfie."""
+    customer = Customer.query.get_or_404(customer_id)
+    data = request.get_json(force=True)
+    decision = data.get("decision")
+    if decision not in ("approved", "rejected", "documents_pending"):
+        return jsonify({"error": "decision deve ser 'approved', 'rejected' ou 'documents_pending' (reabrir)"}), 400
+    customer.verification_status = decision
+    customer.verification_note = data.get("note") or None
+    _log_audit("customer.verification_reviewed", actor="admin", detail={"customer_id": customer.id, "decision": decision})
     db.session.commit()
     return jsonify(customer.to_dict())
 

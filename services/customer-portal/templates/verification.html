@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Verificação de identidade — Divisions Pay{% endblock %}
+{% block content %}
+
+<div style="font-size:20px;font-weight:800;margin-bottom:4px;">Verificação de identidade</div>
+<div style="font-size:13px;color:var(--text-dim);margin-bottom:18px;">
+  Precisa disso pra liberar saques da sua conta — é rápido, só envie os documentos e tire uma selfie pelo celular.
+</div>
+
+<div class="card" style="margin-bottom:16px; display:flex; align-items:center; gap:10px;">
+  <span class="badge status-badge status-{{ 'confirmed' if status == 'approved' else 'failed' if status == 'rejected' else 'pending' }}">{{ status_label }}</span>
+</div>
+
+{% if verification_note and status == 'rejected' %}
+<div class="card" style="margin-bottom:16px; border-color: rgba(255,92,114,0.3); background: rgba(255,92,114,0.06);">
+  <div style="font-weight:700; font-size:13.5px; margin-bottom:4px;">Motivo</div>
+  <div style="font-size:13px; color:var(--text-dim);">{{ verification_note }}</div>
+</div>
+<form method="post" action="{{ url_for('verification_reset') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button type="submit" class="btn" style="margin-bottom:16px;">Reenviar documentos</button>
+</form>
+{% endif %}
+
+{% if status in ('documents_pending', 'rejected') %}
+<div class="card" style="margin-bottom:14px;">
+  <div style="font-weight:700; font-size:14.5px; margin-bottom:12px;">
+    {% if is_company %}Documento da empresa{% else %}Documento de identidade{% endif %}
+  </div>
+
+  {% if is_company %}
+    <form method="post" action="{{ url_for('verification_upload_document') }}" enctype="multipart/form-data" style="margin-bottom:0;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="kind" value="cnpj_card">
+      <label>Cartão CNPJ (foto ou PDF)</label>
+      <input type="file" name="file" accept="image/*,application/pdf" required>
+      <button type="submit" class="btn btn-secondary">{{ 'Reenviar' if 'cnpj_card' in doc_kinds_present else 'Enviar' }}</button>
+      {% if 'cnpj_card' in doc_kinds_present %}<div style="font-size:12px; color:var(--success); margin-top:8px;">✓ já recebido</div>{% endif %}
+    </form>
+  {% else %}
+    <form method="post" action="{{ url_for('verification_upload_document') }}" enctype="multipart/form-data" style="margin-bottom:16px;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="kind" value="id_front">
+      <label>Tipo de documento</label>
+      <select name="document_type">
+        <option value="rg">Carteira de identidade (RG)</option>
+        <option value="cnh">CNH</option>
+      </select>
+      <label>Frente</label>
+      <input type="file" name="file" accept="image/*" required>
+      <button type="submit" class="btn btn-secondary">{{ 'Reenviar' if 'id_front' in doc_kinds_present else 'Enviar frente' }}</button>
+      {% if 'id_front' in doc_kinds_present %}<div style="font-size:12px; color:var(--success); margin-top:8px;">✓ já recebida</div>{% endif %}
+    </form>
+
+    <form method="post" action="{{ url_for('verification_upload_document') }}" enctype="multipart/form-data" style="margin-bottom:0;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="kind" value="id_back">
+      <label>Tipo de documento</label>
+      <select name="document_type">
+        <option value="rg">Carteira de identidade (RG)</option>
+        <option value="cnh">CNH</option>
+      </select>
+      <label>Verso</label>
+      <input type="file" name="file" accept="image/*" required>
+      <button type="submit" class="btn btn-secondary">{{ 'Reenviar' if 'id_back' in doc_kinds_present else 'Enviar verso' }}</button>
+      {% if 'id_back' in doc_kinds_present %}<div style="font-size:12px; color:var(--success); margin-top:8px;">✓ já recebido</div>{% endif %}
+    </form>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if status == 'facial_pending' %}
+<div class="card" style="margin-bottom:14px;">
+  <div style="font-weight:700; font-size:14.5px; margin-bottom:8px;">Verificação facial</div>
+  <div style="font-size:13px; color:var(--text-dim); margin-bottom:14px; line-height:1.5;">
+    Como ainda não temos um app pro celular, a selfie precisa ser tirada por lá: gere o link abaixo e abra ele no navegador do seu celular.
+  </div>
+
+  {% if facial_link %}
+  <div class="card" style="background: var(--surface-2); margin-bottom:12px;">
+    <div style="font-size:12px; color:var(--text-dim); margin-bottom:6px;">Seu link (válido por 30 minutos):</div>
+    <div class="mono" style="font-size:12.5px; word-break:break-all;">{{ facial_link.url }}</div>
+  </div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('verification_generate_facial_link') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button type="submit" class="btn">{{ 'Gerar novo link' if facial_link else 'Gerar link de verificação facial' }}</button>
+  </form>
+</div>
+{% endif %}
+
+{% if status == 'pending_review' %}
+<div class="card" style="text-align:center; color:var(--text-dim); padding: 24px 18px;">
+  Recebemos seus documentos e sua selfie. Nossa equipe está analisando — normalmente leva pouco tempo.
+</div>
+{% endif %}
+
+{% if status == 'approved' %}
+<div class="card" style="text-align:center; padding: 24px 18px;">
+  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" style="color:var(--success); margin-bottom:10px;"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <div style="font-weight:700;">Identidade verificada</div>
+  <div style="font-size:13px; color:var(--text-dim); margin-top:4px;">Você já pode sacar normalmente.</div>
+</div>
+{% endif %}
+
+{% endblock %}

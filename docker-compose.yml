@@ -29,6 +29,9 @@ services:
       SMTP_FROM: ${SMTP_FROM}
       SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
       USDT_BRL_RATE: ${USDT_BRL_RATE:-5.50}
+      VERIFICATION_UPLOAD_DIR: /app/uploads
+    volumes:
+      - verificationdata:/app/uploads
     depends_on:
       mysql:
         condition: service_healthy
@@ -96,9 +99,11 @@ services:
       FORCE_HTTPS_COOKIES: ${FORCE_HTTPS_COOKIES:-true}
       ADMIN_PANEL_PUBLIC_URL: ${ADMIN_PANEL_PUBLIC_URL}
       SSO_SIGNING_SECRET: ${SSO_SIGNING_SECRET:-troque-isto}
+      CUSTOMER_PORTAL_PUBLIC_URL: ${CUSTOMER_PORTAL_PUBLIC_URL}
     depends_on:
       - core-ledger
 
 volumes:
   mysqldata:
   cryptodata:
+  verificationdata:

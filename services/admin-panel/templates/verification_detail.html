@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Verificação — {{ customer.name }}{% endblock %}
+{% block content %}
+<h1>{{ customer.name }}</h1>
+<p class="mono" style="margin-top:-12px;">
+  {{ customer.document or '—' }} · {{ customer.email or '—' }} ·
+  <span class="badge {{ 'warn' if customer.verification_status in ('documents_pending','facial_pending') else 'muted' if customer.verification_status == 'rejected' else '' }}">{{ status_labels.get(customer.verification_status, customer.verification_status) }}</span>
+</p>
+
+{% if customer.verification_note %}
+<div class="card">
+  <strong>Nota da última revisão:</strong>
+  <p class="mono" style="margin-top:6px;">{{ customer.verification_note }}</p>
+</div>
+{% endif %}
+
+<div class="card">
+  <strong>Documentos enviados</strong>
+  {% if documents %}
+  <div style="display:flex; flex-wrap:wrap; gap:16px; margin-top:16px;">
+    {% for doc in documents %}
+    <div style="width:220px;">
+      <div class="mono" style="margin-bottom:6px;">{{ doc_kind_labels.get(doc.kind, doc.kind) }}</div>
+      {% if doc.content_type == 'application/pdf' %}
+      <a href="{{ url_for('verification_document_file', document_id=doc.id) }}" target="_blank" class="btn small secondary">Abrir PDF</a>
+      {% else %}
+      <a href="{{ url_for('verification_document_file', document_id=doc.id) }}" target="_blank">
+        <img src="{{ url_for('verification_document_file', document_id=doc.id) }}" alt="{{ doc.kind }}" style="width:100%; border-radius:10px; border:1px solid var(--border); display:block;">
+      </a>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="mono" style="margin-top:10px;">Nenhum documento enviado ainda.</p>
+  {% endif %}
+
+  <div style="margin-top:16px; font-size:12.5px; color:var(--text-dim);">
+    Documentos exigidos: {% for k in required_kinds %}{{ doc_kind_labels.get(k, k) }}{{ ', ' if not loop.last else '' }}{% endfor %}, além da selfie.
+  </div>
+</div>
+
+{% if customer.verification_status == 'pending_review' %}
+<div class="card">
+  <strong>Decisão</strong>
+  <p class="mono" style="margin: 6px 0 16px;">Compare a selfie com a foto do documento antes de aprovar.</p>
+  <form method="post" action="{{ url_for('verification_review_submit', customer_id=customer.id) }}" style="display:inline-block; margin-right:10px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="decision" value="approved">
+    <button type="submit" class="btn">Aprovar</button>
+  </form>
+  <form method="post" action="{{ url_for('verification_review_submit', customer_id=customer.id) }}" style="display:inline-flex; align-items:center; gap:8px;">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="decision" value="rejected">
+    <input type="text" name="note" placeholder="Motivo da reprovação (o cliente vai ver isso)" style="width:280px;">
+    <button type="submit" class="btn secondary">Reprovar</button>
+  </form>
+</div>
+{% elif customer.verification_status in ('approved', 'rejected') %}
+<div class="card">
+  <strong>Reabrir revisão</strong>
+  <p class="mono" style="margin: 6px 0 16px;">Volta o status pra "aguardando documentos", caso precise que o cliente reenvie algo.</p>
+  <form method="post" action="{{ url_for('verification_review_submit', customer_id=customer.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="decision" value="documents_pending">
+    <button type="submit" class="btn secondary small">Reabrir</button>
+  </form>
+</div>
+{% endif %}
+
+<a href="{{ url_for('verifications_list') }}" class="btn secondary small">← Voltar</a>
+{% endblock %}

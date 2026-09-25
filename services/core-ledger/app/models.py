@@ -156,6 +156,17 @@ class Customer(db.Model):
     auto_convert_to_crypto = db.Column(db.Boolean, nullable=True, default=False)
     crypto_account_id = db.Column(db.String(UUID_LEN), db.ForeignKey("accounts.id"), nullable=True)
 
+    # Verificação de identidade (KYC): documento (RG/CNH se pessoa física,
+    # cartão CNPJ se empresa) + selfie tirada pelo celular via link (ver
+    # FacialVerificationLink). "verification_status" caminha sozinho
+    # conforme os documentos entram (documents_pending -> facial_pending ->
+    # pending_review, calculado em _recompute_verification_status) -- só
+    # "approved"/"rejected" são decisão humana do admin e nunca são
+    # sobrescritos automaticamente depois disso.
+    verification_status = db.Column(db.String(20), nullable=True, default="documents_pending")
+    verification_note = db.Column(db.String(500), nullable=True)
+    id_document_type = db.Column(db.String(10), nullable=True)  # "rg" | "cnh" (só pessoa física)
+
     account = db.relationship("Account", foreign_keys=[account_id])
     crypto_account = db.relationship("Account", foreign_keys=[crypto_account_id])
 
@@ -169,6 +180,9 @@ class Customer(db.Model):
             "account": self.account.to_dict(),
             "auto_convert_to_crypto": bool(self.auto_convert_to_crypto),
             "crypto_account": self.crypto_account.to_dict() if self.crypto_account else None,
+            "verification_status": self.verification_status or "documents_pending",
+            "verification_note": self.verification_note,
+            "id_document_type": self.id_document_type,
         }
 
 
@@ -306,3 +320,47 @@ class PlatformSetting(db.Model):
 
     def to_dict(self):
         return {"key": self.key, "value": self.value}
+
+
+class VerificationDocument(db.Model):
+    """Um arquivo enviado pro processo de verificação de identidade (KYC):
+    frente/verso do RG ou CNH (pessoa física), cartão CNPJ (empresa), ou a
+    selfie tirada pelo celular via link de verificação facial. O arquivo
+    em si fica em disco (VERIFICATION_UPLOAD_DIR, ver routes.py) -- aqui só
+    o metadado e o nome do arquivo salvo."""
+
+    __tablename__ = "verification_documents"
+
+    id = db.Column(db.String(UUID_LEN), primary_key=True, default=gen_uuid)
+    customer_id = db.Column(db.String(UUID_LEN), db.ForeignKey("customers.id"), nullable=False, index=True)
+    kind = db.Column(db.String(20), nullable=False)  # id_front | id_back | cnpj_card | selfie
+    stored_filename = db.Column(db.String(255), nullable=False)
+    content_type = db.Column(db.String(100), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "customer_id": self.customer_id,
+            "kind": self.kind,
+            "content_type": self.content_type,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class FacialVerificationLink(db.Model):
+    """Link de uso único pra abrir no celular e tirar a selfie da
+    verificação facial -- existe porque ainda não tem app mobile: o
+    cliente cadastra pelo navegador do computador, mas a câmera frontal
+    que importa é a do celular. Token opaco, expira em pouco tempo,
+    marcado como usado depois da selfie enviada (não dá pra reenviar
+    selfie pelo mesmo link duas vezes -- gera um novo)."""
+
+    __tablename__ = "facial_verification_links"
+
+    id = db.Column(db.String(UUID_LEN), primary_key=True, default=gen_uuid)
+    customer_id = db.Column(db.String(UUID_LEN), db.ForeignKey("customers.id"), nullable=False, index=True)
+    token = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    used_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), default=utcnow)

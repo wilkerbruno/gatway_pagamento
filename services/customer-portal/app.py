@@ -31,6 +31,12 @@ app.secret_key = os.environ.get("CUSTOMER_PORTAL_SECRET", "troque-isto-em-produc
 # só, e é redirecionado já autenticado pro painel dele (ver login_submit()).
 ADMIN_PANEL_PUBLIC_URL = os.environ.get("ADMIN_PANEL_PUBLIC_URL", "").rstrip("/")
 SSO_SIGNING_SECRET = os.environ.get("SSO_SIGNING_SECRET", "troque-isto-em-producao")
+
+# URL pública deste próprio serviço -- necessária pro link de verificação
+# facial, porque esse link é aberto num dispositivo DIFERENTE (o celular do
+# cliente, não o navegador onde ele fez o cadastro), então precisa ser uma
+# URL absoluta, nunca relativa.
+CUSTOMER_PORTAL_PUBLIC_URL = os.environ.get("CUSTOMER_PORTAL_PUBLIC_URL", "").rstrip("/")
 SSO_TOKEN_TTL_SECONDS = 60
 
 # Cookie de sessão o mais travado possível: só HTTPS (EasyPanel termina TLS
@@ -335,8 +341,8 @@ def register_submit():
     session.clear()
     session["customer_id"] = customer["id"]
     session.permanent = True
-    flash("Conta criada! Bem-vindo à Divisions Pay.", "success")
-    return redirect(url_for("dashboard"))
+    flash("Conta criada! Agora precisamos verificar sua identidade antes de liberar saques.", "success")
+    return redirect(url_for("verification_form"))
 
 
 # --- Esqueci minha senha: código por e-mail, em 3 telas ---------------------
@@ -583,6 +589,9 @@ def withdraw_form():
     customer = require_login()
     if not customer:
         return redirect(url_for("login_form"))
+    if customer.get("verification_status") != "approved":
+        flash("Termine a verificação de identidade antes de sacar.", "error")
+        return redirect(url_for("verification_form"))
     withdrawals = api_get(f"/customers/{customer['id']}/withdrawals")
     return render_template(
         "withdraw.html",
@@ -598,6 +607,9 @@ def withdraw_submit():
     customer = require_login()
     if not customer:
         return redirect(url_for("login_form"))
+    if customer.get("verification_status") != "approved":
+        flash("Termine a verificação de identidade antes de sacar.", "error")
+        return redirect(url_for("verification_form"))
 
     amount_reais = request.form.get("amount", "").replace(",", ".").strip()
     pix_key = request.form.get("pix_key", "").strip()
@@ -641,6 +653,148 @@ def profile():
     if not customer:
         return redirect(url_for("login_form"))
     return render_template("profile.html", customer=customer, balance_display=format_currency(customer["account"]["balance_cents"]))
+
+
+# --- Verificação de identidade (KYC) ---------------------------------------
+#
+# Pessoa física (CPF): manda RG ou CNH, frente e verso. Empresa (CNPJ): manda
+# o cartão CNPJ. Depois, os dois tipos precisam de uma selfie -- como ainda
+# não existe app mobile, a selfie é tirada pelo NAVEGADOR DO CELULAR, através
+# de um link de uso único (/verificacao-facial/<token>, rota pública, sem
+# login -- o celular normalmente não está logado no portal). O status
+# (verification_status) anda sozinho conforme os arquivos chegam; só a
+# aprovação/reprovação final é decisão humana do admin.
+
+VERIFICATION_STATUS_LABELS = {
+    "documents_pending": "Envie seus documentos",
+    "facial_pending": "Falta a verificação facial",
+    "pending_review": "Documentos em análise",
+    "approved": "Verificado",
+    "rejected": "Reprovado",
+}
+
+
+@app.get("/verificacao")
+def verification_form():
+    customer = require_login()
+    if not customer:
+        return redirect(url_for("login_form"))
+    verification = api_get(f"/customers/{customer['id']}/verification")
+    doc_kinds_present = {d["kind"] for d in verification["documents"]}
+    is_company = customer["account"]["kind"] == "merchant"
+    facial_link = session.get("facial_link")
+    return render_template(
+        "verification.html",
+        customer=customer,
+        status=customer.get("verification_status", "documents_pending"),
+        status_label=VERIFICATION_STATUS_LABELS.get(customer.get("verification_status"), "Envie seus documentos"),
+        is_company=is_company,
+        doc_kinds_present=doc_kinds_present,
+        facial_link=facial_link,
+        verification_note=customer.get("verification_note"),
+    )
+
+
+@app.post("/verificacao/documento")
+def verification_upload_document():
+    customer = require_login()
+    if not customer:
+        return redirect(url_for("login_form"))
+
+    kind = request.form.get("kind", "")
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        flash("Selecione um arquivo antes de enviar.", "error")
+        return redirect(url_for("verification_form"))
+
+    data = {"kind": kind}
+    if kind in ("id_front", "id_back"):
+        data["document_type"] = request.form.get("document_type", "")
+
+    r = requests.post(
+        f"{LEDGER_URL}/customers/{customer['id']}/documents",
+        data=data,
+        files={"file": (upload.filename, upload.stream, upload.mimetype)},
+        timeout=20,
+    )
+    if r.status_code not in (200, 201):
+        error_msg = (r.json() or {}).get("error", "Não foi possível enviar o arquivo.") if r.headers.get("content-type", "").startswith("application/json") else "Não foi possível enviar o arquivo."
+        flash(error_msg, "error")
+    else:
+        flash("Documento enviado!", "success")
+    return redirect(url_for("verification_form"))
+
+
+@app.post("/verificacao/link-facial")
+def verification_generate_facial_link():
+    customer = require_login()
+    if not customer:
+        return redirect(url_for("login_form"))
+
+    r = requests.post(f"{LEDGER_URL}/customers/{customer['id']}/facial-verification-link", timeout=10)
+    if r.status_code != 201:
+        flash("Não foi possível gerar o link agora. Tente de novo.", "error")
+        return redirect(url_for("verification_form"))
+
+    data = r.json()
+    absolute_url = f"{CUSTOMER_PORTAL_PUBLIC_URL}{url_for('facial_verification_capture', token=data['token'])}" if CUSTOMER_PORTAL_PUBLIC_URL else url_for("facial_verification_capture", token=data["token"], _external=True)
+    session["facial_link"] = {"url": absolute_url, "expires_at": data["expires_at"]}
+    flash("Link gerado! Abra ele no seu celular pra tirar a selfie.", "success")
+    return redirect(url_for("verification_form"))
+
+
+@app.post("/verificacao/reenviar")
+def verification_reset():
+    """Depois de uma reprovação, o cliente pode mandar os documentos de
+    novo -- isso só reabre o status (documents_pending); os arquivos
+    antigos continuam salvos pro admin comparar, se quiser."""
+    customer = require_login()
+    if not customer:
+        return redirect(url_for("login_form"))
+    requests.put(
+        f"{LEDGER_URL}/customers/{customer['id']}/verification/review",
+        json={"decision": "documents_pending", "note": None},
+        timeout=10,
+    )
+    flash("Pode reenviar seus documentos.", "success")
+    return redirect(url_for("verification_form"))
+
+
+@app.get("/verificacao-facial/<token>")
+def facial_verification_capture(token):
+    """Página PÚBLICA (sem login) que abre no navegador do CELULAR --
+    mobile-first, só um botão de tirar/escolher foto e enviar."""
+    try:
+        r = requests.get(f"{LEDGER_URL}/facial-verification/{token}", timeout=10)
+    except requests.RequestException:
+        return render_template("facial_capture.html", valid=False, error="Não conseguimos confirmar esse link agora. Tente de novo em instantes."), 503
+    if r.status_code == 404:
+        return render_template("facial_capture.html", valid=False, error="Link inválido."), 404
+    if r.status_code == 410:
+        return render_template("facial_capture.html", valid=False, error="Esse link expirou ou já foi usado. Gere um novo no computador."), 410
+    if r.status_code != 200:
+        return render_template("facial_capture.html", valid=False, error="Não foi possível abrir esse link agora."), 400
+
+    data = r.json()
+    return render_template("facial_capture.html", valid=True, customer_name=data["customer_name"], token=token)
+
+
+@app.post("/verificacao-facial/<token>")
+def facial_verification_submit(token):
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        flash("Tire ou escolha uma foto antes de enviar.", "error")
+        return redirect(url_for("facial_verification_capture", token=token))
+
+    r = requests.post(
+        f"{LEDGER_URL}/facial-verification/{token}/selfie",
+        files={"file": (upload.filename, upload.stream, upload.mimetype)},
+        timeout=20,
+    )
+    if r.status_code not in (200, 201):
+        return render_template("facial_capture.html", valid=False, error="Não foi possível enviar a foto. Gere um novo link no computador e tente de novo."), 400
+
+    return render_template("facial_capture.html", valid=True, done=True)
 
 
 # --- Carteira cripto: saldo em USDT + opção de conversão automática -------
