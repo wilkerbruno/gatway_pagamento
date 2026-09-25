@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Comprovante — Divisions Pay{% endblock %}
+{% block content %}
+
+<a href="{{ request.referrer or url_for('extrato') }}" class="back-link">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  Voltar
+</a>
+
+<div class="receipt-head">
+  <div class="receipt-status-icon status-{{ txn.status }}">
+    {% if txn.status == 'confirmed' %}
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    {% elif txn.status == 'failed' %}
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    {% else %}
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="2.2"/><path d="M12 7.5v5l3.2 2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+    {% endif %}
+  </div>
+  <div class="receipt-amount">R$ {{ amount_display }}</div>
+  <div class="receipt-rail">{{ rail_label }}</div>
+  <span class="badge status-badge status-{{ txn.status }}">{{ status_label }}</span>
+</div>
+
+<div class="card receipt-card">
+  <div class="receipt-row">
+    <span class="receipt-label">Id da transação</span>
+    <span class="receipt-value mono">{{ txn.id }}</span>
+  </div>
+  <div class="receipt-row">
+    <span class="receipt-label">Data</span>
+    <span class="receipt-value">{{ txn.created_at[:10] }} às {{ txn.created_at[11:16] }}</span>
+  </div>
+  {% if txn.external_ref %}
+  <div class="receipt-row">
+    <span class="receipt-label">Referência externa</span>
+    <span class="receipt-value mono">{{ txn.external_ref }}</span>
+  </div>
+  {% endif %}
+  {% if destination_note %}
+  <div class="receipt-row">
+    <span class="receipt-label">Destino</span>
+    <span class="receipt-value">{{ destination_note }}</span>
+  </div>
+  {% endif %}
+</div>
+
+{% if debit %}
+<div class="party-block">
+  <div class="party-label">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M17 8l4 4m0 0l-4 4m4-4H3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Quem enviou
+  </div>
+  <div class="card party-card">
+    <div class="party-name">{{ debit.party.name }}</div>
+    {% if debit.party.document %}
+    <div class="party-doc mono">{{ debit.party.document | mask_document }}</div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if credit %}
+<div class="party-block">
+  <div class="party-label">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M7 8L3 12m0 0l4 4m-4-4h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Quem recebeu
+  </div>
+  <div class="card party-card">
+    <div class="party-name">{{ credit.party.name }}</div>
+    {% if credit.party.document %}
+    <div class="party-doc mono">{{ credit.party.document | mask_document }}</div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="receipt-footer">Divisions Pay · comprovante gerado em {{ txn.created_at[:10] }}</div>
+
+{% endblock %}

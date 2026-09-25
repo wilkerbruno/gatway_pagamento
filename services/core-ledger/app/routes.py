@@ -718,6 +718,63 @@ def customer_statement(customer_id):
     })
 
 
+SYSTEM_ACCOUNT_LABELS = {
+    "system:pix_pending": "Mercado Pago / Pagar.me (PIX)",
+    "system:card_receivable": "Adquirente de cartão",
+    "system:crypto_pending": "Rede cripto (on-chain)",
+    "system:payouts_pending": "Saque PIX (banco de destino)",
+    "system:fees": "Divisions Pay (taxas)",
+}
+
+
+def _party_for_account(account_id):
+    """Descobre quem é o dono de uma conta contábil pra montar o
+    comprovante: um Customer/lojista de verdade (nome + documento) ou uma
+    conta de sistema (rotulada de forma amigável, sem expor o owner_ref
+    cru pro cliente final)."""
+    customer = Customer.query.filter_by(account_id=account_id).first()
+    if customer:
+        return {
+            "kind": "merchant" if customer.document and len(customer.document) > 11 else "customer",
+            "name": customer.name,
+            "document": customer.document,
+        }
+    account = Account.query.get(account_id)
+    if account and account.kind == "system":
+        label = SYSTEM_ACCOUNT_LABELS.get(account.owner_ref, "Divisions Pay (sistema)")
+        return {"kind": "system", "name": label, "document": None}
+    return {"kind": "unknown", "name": "—", "document": None}
+
+
+@bp.get("/transactions/<transaction_id>")
+def get_transaction_detail(transaction_id):
+    """Detalhe completo de uma transação pra montar um comprovante:
+    quem enviou, quem recebeu, e os metadados relevantes (chave PIX de
+    destino num saque, provedor usado numa cobrança, etc). Não faz
+    controle de acesso aqui -- quem chama (customer-portal/admin-panel)
+    é responsável por confirmar que o cliente logado participa dessa
+    transação antes de mostrar o resultado."""
+    txn = Transaction.query.get_or_404(transaction_id)
+    entries = []
+    for e in txn.entries:
+        entries.append({
+            "id": e.id,
+            "account_id": e.account_id,
+            "amount_cents": e.amount_cents,
+            "created_at": e.created_at.isoformat(),
+            "party": _party_for_account(e.account_id),
+        })
+    return jsonify({
+        "id": txn.id,
+        "rail": txn.rail,
+        "status": txn.status.value,
+        "external_ref": txn.external_ref,
+        "metadata": txn.metadata_json,
+        "created_at": txn.created_at.isoformat(),
+        "entries": entries,
+    })
+
+
 @bp.post("/transfers")
 def transfer():
     """Transferência interna instantânea entre duas carteiras da plataforma

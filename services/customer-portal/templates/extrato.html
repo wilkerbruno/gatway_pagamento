@@ -9,20 +9,27 @@
 {% if statement.entries %}
 <div class="card" style="padding: 6px 18px;">
   {% for e in statement.entries %}
-  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0; {% if not loop.last %}border-bottom:1px solid var(--border);{% endif %}">
+  <a href="{{ url_for('transaction_receipt', transaction_id=e.transaction_id) }}" class="entry-row">
     <div style="display:flex;align-items:center;gap:12px;">
-      <div style="width:38px;height:38px;border-radius:50%;background:{{ 'rgba(53,208,127,0.12)' if e.is_credit else 'rgba(255,92,114,0.12)' }};display:flex;align-items:center;justify-content:center;font-size:16px;">
-        {{ '⬇️' if e.is_credit else '⬆️' }}
+      <div class="entry-icon" style="background:{{ 'rgba(23,195,160,0.12)' if e.is_credit else 'rgba(255,92,114,0.1)' }}; color:{{ 'var(--success)' if e.is_credit else 'var(--danger)' }};">
+        {% if e.is_credit %}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M6 13l6 6 6-6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        {% else %}
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 19V5M6 11l6-6 6 6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        {% endif %}
       </div>
       <div>
         <div style="font-size:14px;font-weight:600;">{{ e.rail_label }}</div>
         <div style="font-size:12px;color:var(--text-dim);">{{ e.created_at[:10] }} · {{ e.transaction_status|capitalize }}</div>
       </div>
     </div>
-    <div style="font-size:14px;font-weight:700;color:{{ 'var(--success)' if e.is_credit else 'var(--text)' }};">
-      {{ '+' if e.is_credit else '-' }} R$ {{ e.amount_display }}
+    <div style="display:flex; align-items:center; gap:8px;">
+      <div style="font-size:14px;font-weight:700;color:{{ 'var(--success)' if e.is_credit else 'var(--text)' }};">
+        {{ '+' if e.is_credit else '-' }} R$ {{ e.amount_display }}
+      </div>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style="color:var(--text-faint); flex:none;"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>
-  </div>
+  </a>
   {% endfor %}
 </div>
 
@@ -40,4 +47,15 @@
   Nenhuma movimentação nesse período.
 </div>
 {% endif %}
+
+<style>
+  .entry-row{
+    display:flex;align-items:center;justify-content:space-between;padding:12px 0;
+    text-decoration:none; color:inherit; border-bottom:1px solid var(--border);
+  }
+  .entry-row:last-child{ border-bottom:none; }
+  .entry-icon{
+    width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;
+  }
+</style>
 {% endblock %}

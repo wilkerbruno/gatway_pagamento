@@ -151,7 +151,33 @@ def format_currency(cents):
     return f"{cents / 100:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
 
 
+def mask_document(document):
+    """Mascara CPF/CNPJ pro comprovante: mantém só os últimos 3
+    dígitos visíveis, troca os demais dígitos por "*" (pontuação
+    do documento -- pontos, barra, traço -- é preservada como está)."""
+    if not document:
+        return None
+    digits_total = sum(1 for c in document if c.isdigit())
+    kept = 0
+    out = []
+    for ch in reversed(document):
+        if ch.isdigit():
+            kept += 1
+            out.append(ch if (digits_total - kept) >= digits_total - 3 else "*")
+        else:
+            out.append(ch)
+    return "".join(reversed(out))
+
+
+STATUS_LABELS = {
+    "pending": "Pendente",
+    "confirmed": "Confirmada",
+    "failed": "Falhou",
+    "reversed": "Estornada",
+}
+
 app.jinja_env.filters["brl"] = format_currency
+app.jinja_env.filters["mask_document"] = mask_document
 
 
 @app.get("/health")
@@ -323,6 +349,55 @@ def extrato():
         offset=offset,
         limit=limit,
         has_more=len(statement["entries"]) == limit,
+    )
+
+
+@app.get("/extrato/<transaction_id>")
+def transaction_receipt(transaction_id):
+    """Comprovante de uma movimentação: id da transação, quem enviou
+    e quem recebeu (documento mascarado), status e metadados relevantes
+    (chave PIX de destino num saque, provedor usado numa cobrança). Confere
+    que o cliente logado participou da transação antes de mostrar
+    qualquer coisa -- senão um cliente poderia ver o comprovante de
+    qualquer id só adivinhando a URL."""
+    customer = require_login()
+    if not customer:
+        return redirect(url_for("login_form"))
+    try:
+        txn = api_get(f"/transactions/{transaction_id}")
+    except requests.RequestException:
+        abort(404)
+
+    my_account_id = customer["account"]["id"]
+    account_ids = {e["account_id"] for e in txn["entries"]}
+    if my_account_id not in account_ids:
+        abort(404)
+
+    debit = next((e for e in txn["entries"] if e["amount_cents"] < 0), None)
+    credit = next((e for e in txn["entries"] if e["amount_cents"] > 0), None)
+    amount_cents = credit["amount_cents"] if credit else abs(debit["amount_cents"]) if debit else 0
+
+    destination_note = None
+    if txn["rail"] == "withdrawal_pix":
+        meta = txn.get("metadata") or {}
+        key_type = PIX_KEY_TYPES.get(meta.get("pix_key_type"), meta.get("pix_key_type"))
+        if meta.get("pix_key"):
+            destination_note = f"Chave PIX ({key_type}): {meta['pix_key']}"
+    elif txn["rail"] in ("pix", "card", "crypto"):
+        provider = (txn.get("metadata") or {}).get("provider")
+        if provider:
+            destination_note = f"Processado via {provider}"
+
+    return render_template(
+        "receipt.html",
+        customer=customer,
+        txn=txn,
+        debit=debit,
+        credit=credit,
+        amount_display=format_currency(amount_cents),
+        rail_label=RAIL_LABELS.get(txn["rail"], txn["rail"].title()),
+        status_label=STATUS_LABELS.get(txn["status"], txn["status"].title()),
+        destination_note=destination_note,
     )
 
 
